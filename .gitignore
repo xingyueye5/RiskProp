@@ -151,4 +151,6 @@ mmaction/tools/*
 mmaction/.mim
 
 browse_out
+codes
+visualizations
 .gitignore

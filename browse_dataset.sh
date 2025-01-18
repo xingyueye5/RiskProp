@@ -1,0 +1,1 @@
+python tools/visualizations/browse_dataset.py configs/tap.py browse_out --mode pipeline --fps 10 --show-number 20
