@@ -9,4 +9,4 @@ find tap -name "*.py" -exec cp --parents {} codes/$name/$current_datetime/ \;
 # cp -r configs codes/$name/$current_datetime
 find configs -name $name.py -exec cp --parents {} codes/$name/$current_datetime/ \;
 
-tools/dist_train.sh configs/tap.py 4
+tools/dist_train.sh configs/$name.py 4

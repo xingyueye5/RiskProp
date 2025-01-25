@@ -103,7 +103,7 @@ class CustomSampleFrames(BaseTransform):
         start_index = results["start_index"]
         frame_inds = np.concatenate(frame_inds) + start_index
         results["frame_inds"] = frame_inds.astype(np.int32)
-        results["clip_len"] = self.clip_len
+        results["clip_len"] = len(frame_inds)
         results["frame_interval"] = frame_interval
         results["num_clips"] = self.num_clips
         return results
