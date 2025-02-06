@@ -1,6 +1,6 @@
 _base_ = ["_base_/schedules/sgd_50e.py", "_base_/default_runtime.py"]
 
-custom_imports = dict(imports="tap")
+custom_imports = dict(imports="taa")
 
 # dataset settings
 dataset_type = "CapData"
