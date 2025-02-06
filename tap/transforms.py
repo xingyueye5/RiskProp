@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+from typing import Optional
 import numpy as np
 import os.path as osp
 from mmcv.transforms import BaseTransform
@@ -106,6 +107,94 @@ class CustomSampleFrames(BaseTransform):
         results["clip_len"] = len(frame_inds)
         results["frame_interval"] = frame_interval
         results["num_clips"] = self.num_clips
+        return results
+
+
+@TRANSFORMS.register_module()
+class CustomSampleSnippets(BaseTransform):
+    """Sample snippets from the video.
+
+    Required Keys:
+
+        - total_frames
+        - start_index
+
+    Added Keys:
+
+        - frame_inds
+        - frame_interval
+        - num_clips
+
+    Args:
+        snippet_len (int): Frames of each sampled output snippet.
+        num_snippets (int): Number of snippets to be sampled. Default: 1.
+        test_mode (bool): Store True when building test or validation dataset.
+            Defaults to False.
+    """
+
+    def __init__(
+        self, snippet_len: int = 5, num_snippets: Optional[int] = None, test_mode: bool = False, **kwargs
+    ) -> None:
+        self.snippet_len = snippet_len
+        self.num_snippets = num_snippets
+        self.test_mode = test_mode
+
+    def transform(self, results: dict) -> dict:
+        """Perform the CustomSampleSnippets loading.
+
+        Args:
+            results (dict): The resulting dict to be modified and passed
+                to the next transform in pipeline.
+        """
+        total_frames = results["total_frames"]
+        assert results["fps"] in [30, 20, 10]
+        frame_interval = results["fps"] // 10
+
+        accident_frame = results["accident_frame"]
+        start_index = results["start_index"]
+        accident_ind = accident_frame - start_index
+
+        snippet_inds = np.arange(self.snippet_len) * frame_interval
+        snippet_offset_max = total_frames - (self.snippet_len - 1) * frame_interval
+        assert snippet_offset_max > 0
+
+        if self.test_mode:
+            # dense sample from the full video
+            assert self.num_snippets is None
+            num_snippets_max = int(1000 / self.snippet_len)
+            if snippet_offset_max <= frame_interval * num_snippets_max:
+                snippet_offsets = np.arange(0, snippet_offset_max, step=frame_interval)
+            else:
+                # Prevent CUDA out of memory
+                snippet_offsets = np.arange(
+                    max(accident_ind - frame_interval * (num_snippets_max - int(num_snippets_max / 2)), 0),
+                    min(accident_ind + frame_interval * int(num_snippets_max / 2), snippet_offset_max),
+                    step=frame_interval,
+                )
+        else:
+            if isinstance(self.num_snippets, int):
+                assert self.num_snippets >= 1
+                snippet_offsets = np.random.randint(0, snippet_offset_max, size=self.num_snippets)
+            else:
+                raise ValueError("Illegal num_snippets option.")
+
+            snippet_offset_accident = accident_ind - int(np.ceil((self.snippet_len - 1) * frame_interval / 2))
+            snippet_offsets[0] = snippet_offset_accident
+
+        snippet_labels = np.where(
+            np.abs(snippet_offsets + (self.snippet_len - 1) * frame_interval / 2 - accident_ind + 0.25)
+            < frame_interval / 2,
+            1,
+            0,
+        )
+
+        frame_inds = np.concatenate(snippet_offsets[:, None] + snippet_inds[None, :])
+        frame_inds = np.minimum(frame_inds, total_frames - 1) + start_index
+        results["frame_inds"] = frame_inds.astype(np.int32)
+        results["label"] = snippet_labels
+        results["clip_len"] = self.snippet_len
+        results["frame_interval"] = frame_interval
+        results["num_clips"] = len(snippet_offsets)
         return results
 
 

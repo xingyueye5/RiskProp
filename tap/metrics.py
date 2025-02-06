@@ -164,3 +164,30 @@ class EvaluationMetric(BaseMetric):
         eval_results[f"tta{sep}min"] = min([eval_results[f"tta{sep}{t:.1f}"] for t in self.thresholds])
         eval_results[f"\n{sep}num_samples"] = len(labels)
         return eval_results
+
+
+@METRICS.register_module()
+class SnippetMetric(EvaluationMetric):
+    def process(self, data_batch: Sequence[Tuple[Any, Dict]], data_samples: Sequence[Dict]) -> None:
+        """Process one batch of data samples and data_samples. The processed
+        results should be stored in ``self.results``, which will be used to
+        compute the metrics when all batches have been processed.
+
+        Args:
+            data_batch (Sequence[dict]): A batch of data from the dataloader.
+            data_samples (Sequence[dict]): A batch of outputs from the model.
+        """
+        data_samples = copy.deepcopy(data_samples)
+        for data_sample in data_samples:
+            if self.test_mode != data_sample["is_test"]:
+                continue
+            result = dict()
+            result["pred"] = data_sample["pred_score"].cpu().numpy()
+            result["label"] = data_sample["gt_label"].cpu().numpy()
+            self.results.append(result)
+
+            if data_sample["video_id"] in self.vis_list:
+                data_sample["frame_inds"] = data_sample["frame_inds"].reshape(-1, data_sample["clip_len"])[
+                    :, int(np.ceil((data_sample["clip_len"] - 1) / 2))
+                ]
+                visualize_pred_score(data_sample, result, self.output_dir, epoch=self.epoch)
