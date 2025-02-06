@@ -62,7 +62,12 @@ class CustomSampleFrames(BaseTransform):
     """
 
     def __init__(
-        self, clip_len: int, num_clips: int = 1, out_of_bound_opt: str = "loop", test_mode: bool = False, **kwargs
+        self,
+        clip_len: Optional[int] = None,
+        num_clips: int = 1,
+        out_of_bound_opt: str = "loop",
+        test_mode: bool = False,
+        **kwargs
     ) -> None:
         self.clip_len = clip_len
         self.num_clips = num_clips
@@ -71,7 +76,7 @@ class CustomSampleFrames(BaseTransform):
         assert self.out_of_bound_opt in ["loop", "repeat_last"]
 
     def transform(self, results: dict) -> dict:
-        """Perform the SampleFrames loading.
+        """Perform the CustomSampleFrames loading.
 
         Args:
             results (dict): The resulting dict to be modified and passed
@@ -81,29 +86,42 @@ class CustomSampleFrames(BaseTransform):
         assert results["fps"] in [30, 20, 10]
         frame_interval = results["fps"] // 10
 
-        if self.clip_len == -1:
+        if self.test_mode:
             # use full video
+            assert self.clip_len is None
             assert self.num_clips == 1
-            frame_inds = np.arange(0, total_frames, step=frame_interval)[None, :]
+            clip_offsets = np.array([0])
+            clip_inds = np.arange(0, total_frames, step=frame_interval)
         else:
-            clip_offsets = np.random.randint(
-                0, max(total_frames - (self.clip_len - 1) * frame_interval, 1), size=self.num_clips
-            )
-            frame_inds = clip_offsets[:, None] + np.arange(self.clip_len)[None, :] * frame_interval
-            if self.out_of_bound_opt == "loop":
-                frame_inds = np.mod(frame_inds, total_frames)
-            elif self.out_of_bound_opt == "repeat_last":
-                safe_inds = frame_inds < total_frames
-                unsafe_inds = 1 - safe_inds
-                last_ind = np.max(safe_inds * frame_inds, axis=1)
-                new_inds = safe_inds * frame_inds + (unsafe_inds.T * last_ind).T
-                frame_inds = new_inds
+            if isinstance(self.clip_len, int):
+                assert self.clip_len >= 1
+                clip_offset_max = total_frames - (self.clip_len - 1) * frame_interval
+                clip_offset_max = max(clip_offset_max, 1)
+                assert clip_offset_max > 0
+                clip_offsets = np.random.randint(0, clip_offset_max, size=self.num_clips)
+                clip_inds = np.arange(self.clip_len) * frame_interval
             else:
-                raise ValueError("Illegal out_of_bound option.")
+                raise ValueError("Illegal clip_len option.")
 
-        start_index = results["start_index"]
-        frame_inds = np.concatenate(frame_inds) + start_index
+        frame_inds = np.concatenate(clip_offsets[:, None] + clip_inds[None, :])
+        if self.out_of_bound_opt == "loop":
+            frame_inds = np.mod(frame_inds, total_frames)
+        elif self.out_of_bound_opt == "repeat_last":
+            safe_inds = frame_inds < total_frames
+            unsafe_inds = 1 - safe_inds
+            last_ind = np.max(safe_inds * frame_inds, axis=1)
+            new_inds = safe_inds * frame_inds + (unsafe_inds.T * last_ind).T
+            frame_inds = new_inds
+        else:
+            raise ValueError("Illegal out_of_bound option.")
+
+        frame_inds = frame_inds + results["start_index"]
+        accident_frame = results["accident_frame"]
+
+        frame_labels = np.where(np.abs(frame_inds - accident_frame + 0.25) < frame_interval / 2, 1, 0)
+
         results["frame_inds"] = frame_inds.astype(np.int32)
+        results["label"] = frame_labels
         results["clip_len"] = len(frame_inds)
         results["frame_interval"] = frame_interval
         results["num_clips"] = self.num_clips

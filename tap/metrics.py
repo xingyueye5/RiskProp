@@ -34,7 +34,7 @@ def to_tensor(value):
 
 
 @METRICS.register_module()
-class EvaluationMetric(BaseMetric):
+class FrameMetric(BaseMetric):
     """Accuracy evaluation metric."""
 
     default_prefix: Optional[str] = ""
@@ -94,19 +94,11 @@ class EvaluationMetric(BaseMetric):
             if self.test_mode != data_sample["is_test"]:
                 continue
             result = dict()
-            pred = data_sample["pred_score"].cpu().numpy()
-            label = np.zeros_like(pred)
-            frame_inds = data_sample["frame_inds"]
-            frame_interval = data_sample["frame_interval"]
-            accident_frame = data_sample["accident_frame"]
-            index = np.argmin(np.abs(frame_inds - accident_frame))
-            if np.abs(frame_inds[index] - accident_frame) < frame_interval:
-                label[index] = 1
-            result["pred"] = pred
-            result["label"] = label
+            result["pred"] = data_sample["pred_score"].cpu().numpy()
+            result["label"] = data_sample["gt_label"].cpu().numpy()
             self.results.append(result)
-            video_id = data_sample["video_id"]
-            if video_id in self.vis_list:
+
+            if data_sample["video_id"] in self.vis_list:
                 visualize_pred_score(data_sample, result, self.output_dir, epoch=self.epoch)
 
     def compute_metrics(self, results: List) -> Dict:
@@ -167,7 +159,7 @@ class EvaluationMetric(BaseMetric):
 
 
 @METRICS.register_module()
-class SnippetMetric(EvaluationMetric):
+class SnippetMetric(FrameMetric):
     def process(self, data_batch: Sequence[Tuple[Any, Dict]], data_samples: Sequence[Dict]) -> None:
         """Process one batch of data samples and data_samples. The processed
         results should be stored in ``self.results``, which will be used to

@@ -17,7 +17,7 @@ from mmaction.models.heads.base import AvgConsensus
 
 @MODELS.register_module()
 class FrameClsHead(BaseHead):
-    """Class head for TSN.
+    """The classification head for frames.
 
     Args:
         num_classes (int): Number of classes to be classified.
@@ -38,6 +38,7 @@ class FrameClsHead(BaseHead):
         num_classes: int,
         in_channels: int,
         loss_cls: ConfigType = dict(type="CrossEntropyLoss"),
+        pos_weight: float = 1,
         spatial_type: str = "avg",
         consensus: ConfigType = dict(type="AvgConsensus", dim=1),
         dropout_ratio: float = 0.4,
@@ -69,6 +70,7 @@ class FrameClsHead(BaseHead):
         else:
             self.dropout = None
         self.fc_cls = nn.Linear(self.in_channels, self.num_classes)
+        self.pos_weight = torch.tensor(pos_weight)
 
     def init_weights(self) -> None:
         """Initiate the parameters from scratch."""
@@ -116,15 +118,8 @@ class FrameClsHead(BaseHead):
         Returns:
             dict: A dictionary of loss components.
         """
-        labels = torch.zeros_like(cls_scores)
-        for i, data_sample in enumerate(data_samples):
-            clip_len = data_sample.clip_len
-            frame_inds = data_sample.frame_inds
-            frame_interval = data_sample.frame_interval
-            accident_frame = data_sample.accident_frame
-            index = np.argmin(np.abs(frame_inds - accident_frame))
-            if np.abs(frame_inds[index] - accident_frame) < frame_interval:
-                labels[i * clip_len + index] = 1
+        labels = [x.gt_label for x in data_samples]
+        labels = torch.concatenate(labels).float()
 
         losses = dict()
         if labels.shape == torch.Size([]):
@@ -144,7 +139,7 @@ class FrameClsHead(BaseHead):
                 labels = F.one_hot(labels, num_classes=self.num_classes)
             labels = (1 - self.label_smooth_eps) * labels + self.label_smooth_eps / self.num_classes
 
-        loss_cls = self.loss_cls(cls_scores, labels, pos_weight=torch.tensor(10))
+        loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
         # loss_cls may be dictionary or single tensor
         if isinstance(loss_cls, dict):
             losses.update(loss_cls)
@@ -253,8 +248,8 @@ class FrameClsHeadWithRNN(FrameClsHead):
 
 
 @MODELS.register_module()
-class SnippetClsHead(BaseHead):
-    """The classification head for Snippet.
+class SnippetClsHead(FrameClsHead):
+    """The classification head for snippets.
 
     Args:
         num_classes (int): Number of classes to be classified.
@@ -268,37 +263,6 @@ class SnippetClsHead(BaseHead):
             the head.
     """
 
-    def __init__(
-        self,
-        num_classes: int,
-        in_channels: int,
-        loss_cls: ConfigType = dict(type="CrossEntropyLoss"),
-        spatial_type: str = "avg",
-        dropout_ratio: float = 0.8,
-        init_std: float = 0.01,
-        **kwargs,
-    ) -> None:
-
-        super().__init__(num_classes, in_channels, loss_cls, **kwargs)
-        self.spatial_type = spatial_type
-        self.dropout_ratio = dropout_ratio
-        self.init_std = init_std
-
-        if self.dropout_ratio != 0:
-            self.dropout = nn.Dropout(p=self.dropout_ratio)
-        else:
-            self.dropout = None
-        self.fc_cls = nn.Linear(in_channels, num_classes)
-
-        if self.spatial_type == "avg":
-            self.avg_pool = nn.AdaptiveAvgPool3d((1, 1, 1))
-        else:
-            self.avg_pool = None
-
-    def init_weights(self) -> None:
-        """Initiate the parameters from scratch."""
-        normal_init(self.fc_cls, std=self.init_std)
-
     def forward(self, x, **kwargs) -> None:
         """Defines the computation performed at every call.
 
@@ -310,10 +274,10 @@ class SnippetClsHead(BaseHead):
         """
         T = x.shape[2]
         # [N, C, T, H, W]
-        x = x[:, :, int(np.ceil((T - 1) / 2)), :, :].unsqueeze(2)
-        # [N, C, 1, H, W]
+        x = x[:, :, int(np.ceil((T - 1) / 2)), :, :]
+        # [N, C, H, W]
         x = self.avg_pool(x)
-        # [N, C, 1, 1, 1]
+        # [N, C, 1, 1]
         x = x.squeeze()
         # [N, C]
         if self.dropout is not None:
@@ -322,63 +286,3 @@ class SnippetClsHead(BaseHead):
         cls_score = self.fc_cls(x)
         # [N, num_classes]
         return cls_score.squeeze()
-
-    def loss_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> Dict:
-        """Calculate the loss based on the features extracted by the head.
-
-        Args:
-            cls_scores (torch.Tensor): Classification prediction results of
-                all class, has shape (batch_size, num_classes).
-            data_samples (list[:obj:`ActionDataSample`]): The batch
-                data samples.
-
-        Returns:
-            dict: A dictionary of loss components.
-        """
-        labels = [x.gt_label for x in data_samples]
-        labels = torch.concatenate(labels).float()
-
-        losses = dict()
-        if labels.shape == torch.Size([]):
-            labels = labels.unsqueeze(0)
-        elif labels.dim() == 1 and labels.size()[0] == self.num_classes and cls_scores.size()[0] == 1:
-            # Fix a bug when training with soft labels and batch size is 1.
-            # When using soft labels, `labels` and `cls_score` share the same
-            # shape.
-            labels = labels.unsqueeze(0)
-
-        if cls_scores.size() != labels.size():
-            top_k_acc = top_k_accuracy(cls_scores.detach().cpu().numpy(), labels.detach().cpu().numpy(), self.topk)
-            for k, a in zip(self.topk, top_k_acc):
-                losses[f"top{k}_acc"] = torch.tensor(a, device=cls_scores.device)
-        if self.label_smooth_eps != 0:
-            if cls_scores.size() != labels.size():
-                labels = F.one_hot(labels, num_classes=self.num_classes)
-            labels = (1 - self.label_smooth_eps) * labels + self.label_smooth_eps / self.num_classes
-
-        loss_cls = self.loss_cls(cls_scores, labels, pos_weight=torch.tensor(1))
-        # loss_cls may be dictionary or single tensor
-        if isinstance(loss_cls, dict):
-            losses.update(loss_cls)
-        else:
-            losses["loss_cls"] = loss_cls
-        return losses
-
-    def predict_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> SampleList:
-        """Transform a batch of output features extracted from the head into
-        prediction results.
-
-        Args:
-            cls_scores (torch.Tensor): Classification scores, has a shape
-                (B*num_segs, num_classes)
-            data_samples (list[:obj:`ActionDataSample`]): The
-                annotation data of every samples. It usually includes
-                information such as `gt_label`.
-
-        Returns:
-            List[:obj:`ActionDataSample`]: Recognition results wrapped
-                by :obj:`ActionDataSample`.
-        """
-        assert len(data_samples) == 1, "Test batch size must be 1!"
-        data_samples[0].set_pred_score(F.sigmoid(cls_scores))
-        return data_samples

@@ -38,24 +38,16 @@ train_pipeline = [
     dict(type="Resize", scale=(224, 224), keep_ratio=False),
     # dict(type="Flip", flip_ratio=0.5),
     dict(type="FormatShape", input_format="NCHW"),
-    dict(
-        type="PackActionInputs",
-        meta_keys=(),
-        algorithm_keys=algorithm_keys,
-    ),
+    dict(type="PackActionInputs", meta_keys=(), algorithm_keys=algorithm_keys),
     # dict(type="VisualizeInputsAsVideos", output_dir="visualizations/inputs_train"),
 ]
 val_pipeline = [
-    dict(type="CustomSampleFrames", clip_len=-1, num_clips=1, test_mode=True),
+    dict(type="CustomSampleFrames", clip_len=None, num_clips=1, test_mode=True),
     dict(type="RawFrameDecode", **file_client_args),
     dict(type="Resize", scale=(224, 224), keep_ratio=False),
     # dict(type="CenterCrop", crop_size=224),
     dict(type="FormatShape", input_format="NCHW"),
-    dict(
-        type="PackActionInputs",
-        meta_keys=(),
-        algorithm_keys=algorithm_keys,
-    ),
+    dict(type="PackActionInputs", meta_keys=(), algorithm_keys=algorithm_keys),
 ]
 test_pipeline = val_pipeline
 
@@ -93,12 +85,12 @@ test_dataloader = val_dataloader
 
 val_evaluator = [
     dict(
-        type="EvaluationMetric",
+        type="FrameMetric",
         thresholds=[x * 0.1 for x in range(1, 10)],
         test_mode=False,
     ),
     dict(
-        type="EvaluationMetric",
+        type="FrameMetric",
         thresholds=[x * 0.1 for x in range(1, 10)],
         vis_list={
             "001537": 1,
@@ -259,11 +251,23 @@ val_evaluator = [
 ]
 test_evaluator = val_evaluator
 
+train_cfg = dict(type="EpochBasedTrainLoop", max_epochs=50, val_begin=1, val_interval=1)
+
+# param_scheduler = [
+#     dict(
+#         type='MultiStepLR',
+#         begin=0,
+#         end=50,
+#         by_epoch=True,
+#         milestones=[5, 10, 15, 20],
+#         gamma=0.1)
+# ]
+
 # 每轮都保存权重，并且只保留最新的权重
 default_hooks = dict(
     checkpoint=dict(type="CheckpointHook", interval=1, max_keep_ckpts=1, save_best="f_pre@max", rule="greater")
 )
-custom_hooks = [dict(type="EpochHook")]
+custom_hooks = [dict(type="EpochHook"), dict(type="MetricHook")]
 
 model = dict(
     type="Recognizer2D",
@@ -277,6 +281,7 @@ model = dict(
         in_channels=2048,
         spatial_type="avg",
         loss_cls=dict(type="BCELossWithLogits"),
+        pos_weight=10,
     ),
     data_preprocessor=dict(
         type="ActionDataPreprocessor", mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], format_shape="NCHW"
