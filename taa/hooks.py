@@ -21,9 +21,16 @@ class MetricHook(Hook):
         self.f_rec_train = []
         self.f_pre_val = []
         self.f_rec_val = []
+        self.v_fpc_train = []
+        self.v_fpr_train = []
+        self.v_rec_train = []
+        self.v_fpc_val = []
+        self.v_fpr_val = []
+        self.v_rec_val = []
 
     def after_val_epoch(self, runner, metrics) -> None:
         self.epochs.append(runner.epoch)
+        plt.figure()
         if "f_pre#0.5" in metrics and "f_rec#0.5" in metrics:
             self.f_pre_train.append(metrics["f_pre#0.5"])
             self.f_rec_train.append(metrics["f_rec#0.5"])
@@ -42,5 +49,31 @@ class MetricHook(Hook):
         plt.ylim(-0.1, 1.1)
         plt.xticks(range(1, max(self.epochs) + 1, 1))
         plt.yticks([i * 0.1 for i in range(0, 11)])
-        plt.savefig(osp.join(runner.log_dir, "metrics.png"))
+        plt.savefig(osp.join(runner.log_dir, "metrics_f.png"))
+        plt.close()
+
+        plt.figure()
+        if "\nv_fpc#0.5" in metrics and "v_fpr#0.5" in metrics and "v_rec#0.5" in metrics:
+            self.v_fpc_train.append(metrics["\nv_fpc#0.5"])
+            self.v_fpr_train.append(metrics["v_fpr#0.5"])
+            self.v_rec_train.append(metrics["v_rec#0.5"])
+            plt.plot(self.epochs, self.v_fpc_train, label="v_fpc#0.5 (train)", marker="o", color="blue")
+            plt.plot(self.epochs, self.v_fpr_train, label="v_fpr#0.5 (train)", marker="o", color="red")
+            plt.plot(self.epochs, self.v_rec_train, label="v_rec#0.5 (train)", marker="o", color="green")
+        if "\nv_fpc@0.5" in metrics and "v_fpr@0.5" in metrics and "v_rec@0.5" in metrics:
+            self.v_fpc_val.append(metrics["\nv_fpc@0.5"])
+            self.v_fpr_val.append(metrics["v_fpr@0.5"])
+            self.v_rec_val.append(metrics["v_rec@0.5"])
+            plt.plot(self.epochs, self.v_fpc_val, label="v_fpc@0.5 (val)", marker="o", color="purple")
+            plt.plot(self.epochs, self.v_fpr_val, label="v_fpr@0.5 (val)", marker="o", color="yellow")
+            plt.plot(self.epochs, self.v_rec_val, label="v_rec@0.5 (val)", marker="o", color="orange")
+        plt.title("Video level Precision and Recall")
+        plt.xlabel("Epochs")
+        plt.legend()
+        plt.legend()
+        plt.xlim(0, max(self.epochs) + 1)
+        plt.ylim(-0.1, 1.1)
+        plt.xticks(range(1, max(self.epochs) + 1, 1))
+        plt.yticks([i * 0.1 for i in range(0, 11)])
+        plt.savefig(osp.join(runner.log_dir, "metrics_v.png"))
         plt.close()

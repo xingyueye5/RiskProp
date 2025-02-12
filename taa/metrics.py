@@ -131,7 +131,18 @@ class FrameMetric(BaseMetric):
         for t in self.thresholds:
             preds_t = [pred >= t for pred in preds]
             labels_t = [label == 1 for label in labels]
-            pred_videos = np.array([np.any(pred) for pred in preds_t])
+            pred_videos = np.array(
+                [np.any(pred[np.argmax(label) - 2 : np.argmax(label) + 3]) for pred, label in zip(preds_t, labels_t)]
+            )
+            pred_before_accident = np.concatenate(
+                [pred[: np.argmax(label) - 2] for pred, label in zip(preds_t, labels_t)]
+            )
+            false_positive_count = np.array(
+                [
+                    len(np.where(np.diff(np.concatenate(([0], pred[: np.argmax(label) - 2]))) == 1)[0])
+                    for pred, label in zip(preds_t, labels_t)
+                ]
+            )
             label_videos = np.array([np.any(label) for label in labels_t])
             pred_frames = np.concatenate(preds_t)
             label_frames = np.concatenate(labels_t)
@@ -142,15 +153,14 @@ class FrameMetric(BaseMetric):
                 if np.any(label) and np.any(pred)
             ]
 
-            eval_results[f"\nv_acc{sep}{t:.1f}"] = accuracy_score(label_videos, pred_videos)
-            eval_results[f"v_pre{sep}{t:.1f}"] = precision_score(label_videos, pred_videos, zero_division=0)
+            eval_results[f"\nv_fpc{sep}{t:.1f}"] = false_positive_count.sum() / len(false_positive_count)
+            eval_results[f"v_fpr{sep}{t:.1f}"] = pred_before_accident.sum() / len(pred_before_accident)
             eval_results[f"v_rec{sep}{t:.1f}"] = recall_score(label_videos, pred_videos, zero_division=0)
-            eval_results[f"f_acc{sep}{t:.1f}"] = accuracy_score(label_frames, pred_frames)
             eval_results[f"f_pre{sep}{t:.1f}"] = precision_score(label_frames, pred_frames, zero_division=0)
             eval_results[f"f_rec{sep}{t:.1f}"] = recall_score(label_frames, pred_frames, zero_division=0)
             eval_results[f"tta{sep}{t:.1f}"] = sum(ttas) / len(ttas) if len(ttas) else 0
 
-        metrics = ["\nv_acc", "v_pre", "v_rec", "f_acc", "f_pre", "f_rec"]
+        metrics = ["\nv_fpc", "v_fpr", "v_rec", "f_pre", "f_rec"]
         for metric in metrics:
             eval_results[f"{metric}{sep}max"] = max([eval_results[f"{metric}{sep}{t:.1f}"] for t in self.thresholds])
         eval_results[f"tta{sep}min"] = min([eval_results[f"tta{sep}{t:.1f}"] for t in self.thresholds])
