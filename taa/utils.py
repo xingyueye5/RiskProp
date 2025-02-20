@@ -139,15 +139,46 @@ def visualize_pred_score(data_sample, result, output_dir, epoch=None, fps=10):
             # 绘制灰色条带
             cv2.rectangle(frame, (0, 0), (640, 36), (128, 128, 128), -1)
         # 绘制预测分数
-        cv2.putText(
-            frame,
-            f"Pred: {pred[i]:.2f}  Label: {int(label[i])}  " + "*" * int(pred[i] * 10 // 1),
-            (20, 27),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 255),
-            2,
-        )
+        if len(pred.shape) == 1:
+            cv2.putText(
+                frame,
+                f"Pred: {pred[i]:.2f}  Label: {int(label[i])}  " + "*" * int(pred[i] * 10 // 1),
+                (20, 27),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+            )
+        if len(pred.shape) == 2:
+            cv2.putText(
+                frame,
+                f"Pred: {pred[i][0]:.2f}  Label: {int(label[i])}  " + "*" * int(pred[i][0] * 10 // 1),
+                (20, 27),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+            )
+            for j in range(1, len(pred[i])):
+                l = "?" if i + j >= len(label) else int(label[i + j])
+                cv2.putText(
+                    frame,
+                    f"{j/fps:.1f}s:  {pred[i][j]:.2f}  {l}  " + "*" * int(pred[i][j] * 10 // 1),
+                    (20, 40 + 12 * j),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4,
+                    (255, 255, 255),
+                    2,
+                )
+                cv2.putText(
+                    frame,
+                    f"{j/fps:.1f}s:  {pred[i][j]:.2f}  {l}  " + "*" * int(pred[i][j] * 10 // 1),
+                    (20, 40 + 12 * j),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4,
+                    (0, 0, 255),
+                    1,
+                )
         video_writer.write(frame)
 
     video_writer.release()

@@ -217,6 +217,73 @@ class CustomSampleSnippets(BaseTransform):
 
 
 @TRANSFORMS.register_module()
+class SampleFramesForAnticipation(BaseTransform):
+    """Sample frames for anticipation task.
+
+    Required Keys:
+
+        - total_frames
+        - start_index
+
+    Added Keys:
+
+        - frame_inds
+        - frame_interval
+        - num_clips
+
+    Args:
+        clip_len (int): Frames of each sampled output clip.
+        num_clips (int): Number of clips to be sampled. Default: 1.
+        test_mode (bool): Store True when building test or validation dataset.
+            Defaults to False.
+    """
+
+    def __init__(self, clip_len: Optional[int] = None, num_clips: int = 1, test_mode: bool = False, **kwargs) -> None:
+        self.clip_len = clip_len
+        self.num_clips = num_clips
+        self.test_mode = test_mode
+
+    def transform(self, results: dict) -> dict:
+        """Perform the SampleFramesBeforeAccident loading.
+
+        Args:
+            results (dict): The resulting dict to be modified and passed
+                to the next transform in pipeline.
+        """
+        total_frames = results["total_frames"]
+        assert results["fps"] in [30, 20, 10]
+        frame_interval = results["fps"] // 10
+
+        accident_frame = results["accident_frame"]
+        start_index = results["start_index"]
+
+        if self.test_mode:
+            # sample all frames
+            assert self.clip_len is None
+            assert self.num_clips == 1
+            clip_inds = np.arange(total_frames, step=frame_interval)
+            clip_offsets = np.full(self.num_clips, start_index)
+        else:
+            assert isinstance(self.clip_len, int)
+            assert self.clip_len >= 1
+            clip_inds = np.arange(self.clip_len) * frame_interval
+            clip_offsets = np.full(
+                self.num_clips, min(accident_frame + 5 * frame_interval, total_frames - 1 + start_index) - clip_inds[-1]
+            )
+
+        frame_inds = np.concatenate(clip_offsets[:, None] + clip_inds[None, :])
+        frame_inds = np.maximum(frame_inds, start_index)
+        frame_labels = (frame_inds >= accident_frame).astype(int)
+
+        results["frame_inds"] = frame_inds.astype(np.int32)
+        results["label"] = frame_labels
+        results["clip_len"] = len(clip_inds)
+        results["frame_interval"] = frame_interval
+        results["num_clips"] = self.num_clips
+        return results
+
+
+@TRANSFORMS.register_module()
 class VisualizeInputsAsVideos(BaseTransform):
     """Visualize inputs as videos and save them to the specified directory.
 
