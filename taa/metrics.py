@@ -272,6 +272,24 @@ class AnticipationMetric(BaseMetric):
         for t in self.thresholds:
             preds_t = [pred >= t for pred in preds]
             labels_t = [label == 1 for label in labels]
+
+            if len(preds[0].shape) == 1:
+                alarms_before_abnormal = np.concatenate([pred[:i] for pred, i in zip(preds_t, abnormal_start_inds)])
+                ttas = np.array(
+                    [
+                        (j - i - np.argmax(pred[i:j])) / 10
+                        for pred, i, j in zip(preds_t, abnormal_start_inds, accident_inds)
+                        if np.any(pred[i:j])
+                    ]
+                )
+
+                eval_results[f"\nd_fpr{sep}{t:.1f}"] = 0
+                eval_results[f"d_rec_1{sep}{t:.1f}"] = 0
+                eval_results[f"d_rec_5{sep}{t:.1f}"] = 0
+                eval_results[f"a_fpr{sep}{t:.1f}"] = alarms_before_abnormal.sum() / len(alarms_before_abnormal)
+                eval_results[f"a_tta{sep}{t:.1f}"] = sum(ttas) / len(ttas) if len(ttas) else 0
+                continue
+
             preds_video_1 = np.array([pred[np.argmax(label), 0] for pred, label in zip(preds_t, labels_t)])
             preds_video_5 = np.array(
                 [np.any(pred[np.argmax(label) - 2 : np.argmax(label) + 3, 0]) for pred, label in zip(preds_t, labels_t)]

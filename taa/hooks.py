@@ -100,12 +100,12 @@ class AnticipationMetricHook(Hook):
         plt.figure()
         if "a_fpr#0.5" in metrics and "a_tta#0.5" in metrics:
             self.a_fpr_train.append(metrics["a_fpr#0.5"])
-            self.a_tta_train.append(metrics["a_tta#0.5"])
+            self.a_tta_train.append(metrics["a_tta#0.5"] / 10)
             plt.plot(self.epochs, self.a_fpr_train, label="a_fpr#0.5 (train)", marker="o", color="blue")
             plt.plot(self.epochs, self.a_tta_train, label="a_tta#0.5 (train)", marker="o", color="green")
         if "a_fpr@0.5" in metrics and "a_tta@0.5" in metrics:
             self.a_fpr_val.append(metrics["a_fpr@0.5"])
-            self.a_tta_val.append(metrics["a_tta@0.5"])
+            self.a_tta_val.append(metrics["a_tta@0.5"] / 10)
             plt.plot(self.epochs, self.a_fpr_val, label="a_fpr@0.5 (val)", marker="o", color="red")
             plt.plot(self.epochs, self.a_tta_val, label="a_tta@0.5 (val)", marker="o", color="purple")
         plt.title("Anticipation Metrics")
