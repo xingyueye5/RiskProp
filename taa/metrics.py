@@ -273,7 +273,12 @@ class AnticipationMetric(BaseMetric):
             preds_t = [pred >= t for pred in preds]
             labels_t = [label == 1 for label in labels]
 
+            labels_video = np.array([np.any(label) for label in labels_t])
+
             if len(preds[0].shape) == 1:
+                alarms_video = np.array(
+                    [np.any(pred[i:j]) for pred, i, j in zip(preds_t, abnormal_start_inds, accident_inds)]
+                )
                 alarms_before_abnormal = np.concatenate([pred[:i] for pred, i in zip(preds_t, abnormal_start_inds)])
                 ttas = np.array(
                     [
@@ -287,6 +292,7 @@ class AnticipationMetric(BaseMetric):
                 eval_results[f"d_rec_1{sep}{t:.1f}"] = 0
                 eval_results[f"d_rec_5{sep}{t:.1f}"] = 0
                 eval_results[f"a_fpr{sep}{t:.1f}"] = alarms_before_abnormal.sum() / len(alarms_before_abnormal)
+                eval_results[f"a_rec{sep}{t:.1f}"] = recall_score(labels_video, alarms_video, zero_division=0)
                 eval_results[f"a_tta{sep}{t:.1f}"] = sum(ttas) / len(ttas) if len(ttas) else 0
                 continue
 
@@ -294,9 +300,11 @@ class AnticipationMetric(BaseMetric):
             preds_video_5 = np.array(
                 [np.any(pred[np.argmax(label) - 2 : np.argmax(label) + 3, 0]) for pred, label in zip(preds_t, labels_t)]
             )
-            labels_video = np.array([np.any(label) for label in labels_t])
             preds_before_accident = np.concatenate(
                 [pred[: np.argmax(label), 0] for pred, label in zip(preds_t, labels_t)]
+            )
+            alarms_video = np.array(
+                [np.any(pred[i:j]) for pred, i, j in zip(preds_t, abnormal_start_inds, accident_inds)]
             )
             alarms_before_abnormal = np.concatenate(
                 [np.any(pred[:i], axis=1) for pred, i in zip(preds_t, abnormal_start_inds)]
@@ -313,6 +321,7 @@ class AnticipationMetric(BaseMetric):
             eval_results[f"d_rec_1{sep}{t:.1f}"] = recall_score(labels_video, preds_video_1, zero_division=0)
             eval_results[f"d_rec_5{sep}{t:.1f}"] = recall_score(labels_video, preds_video_5, zero_division=0)
             eval_results[f"a_fpr{sep}{t:.1f}"] = alarms_before_abnormal.sum() / len(alarms_before_abnormal)
+            eval_results[f"a_rec{sep}{t:.1f}"] = recall_score(labels_video, alarms_video, zero_division=0)
             eval_results[f"a_tta{sep}{t:.1f}"] = sum(ttas) / len(ttas) if len(ttas) else 0
 
         eval_results[f"\n{sep}num_samples"] = len(labels)

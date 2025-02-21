@@ -85,8 +85,10 @@ class AnticipationMetricHook(Hook):
         super().__init__()
         self.epochs = []
         self.a_fpr_train = []
+        self.a_rec_train = []
         self.a_tta_train = []
         self.a_fpr_val = []
+        self.a_rec_val = []
         self.a_tta_val = []
         self.d_fpr_train = []
         self.d_rec_1_train = []
@@ -98,16 +100,20 @@ class AnticipationMetricHook(Hook):
     def after_val_epoch(self, runner, metrics) -> None:
         self.epochs.append(runner.epoch)
         plt.figure()
-        if "a_fpr#0.5" in metrics and "a_tta#0.5" in metrics:
+        if "a_fpr#0.5" in metrics and "a_rec#0.5" in metrics and "a_tta#0.5" in metrics:
             self.a_fpr_train.append(metrics["a_fpr#0.5"])
+            self.a_rec_train.append(metrics["a_rec#0.5"])
             self.a_tta_train.append(metrics["a_tta#0.5"] / 10)
             plt.plot(self.epochs, self.a_fpr_train, label="a_fpr#0.5 (train)", marker="o", color="blue")
+            plt.plot(self.epochs, self.a_rec_train, label="a_rec#0.5 (train)", marker="o", color="red")
             plt.plot(self.epochs, self.a_tta_train, label="a_tta#0.5 (train)", marker="o", color="green")
-        if "a_fpr@0.5" in metrics and "a_tta@0.5" in metrics:
+        if "a_fpr@0.5" in metrics and "a_rec@0.5" in metrics and "a_tta@0.5" in metrics:
             self.a_fpr_val.append(metrics["a_fpr@0.5"])
+            self.a_rec_val.append(metrics["a_rec@0.5"])
             self.a_tta_val.append(metrics["a_tta@0.5"] / 10)
-            plt.plot(self.epochs, self.a_fpr_val, label="a_fpr@0.5 (val)", marker="o", color="red")
-            plt.plot(self.epochs, self.a_tta_val, label="a_tta@0.5 (val)", marker="o", color="purple")
+            plt.plot(self.epochs, self.a_fpr_val, label="a_fpr@0.5 (val)", marker="o", color="purple")
+            plt.plot(self.epochs, self.a_rec_val, label="a_rec@0.5 (val)", marker="o", color="yellow")
+            plt.plot(self.epochs, self.a_tta_val, label="a_tta@0.5 (val)", marker="o", color="orange")
         plt.title("Anticipation Metrics")
         plt.xlabel("Epochs")
         plt.legend()
