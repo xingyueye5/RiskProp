@@ -85,12 +85,12 @@ test_dataloader = val_dataloader
 
 val_evaluator = [
     dict(
-        type="FrameMetric",
+        type="DetectionMetric",
         thresholds=[x * 0.1 for x in range(1, 10)],
         test_mode=False,
     ),
     dict(
-        type="FrameMetric",
+        type="DetectionMetric",
         thresholds=[x * 0.1 for x in range(1, 10)],
         vis_list={
             "001537": 1,

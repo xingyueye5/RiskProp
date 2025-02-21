@@ -196,14 +196,11 @@ class CustomSampleSnippets(BaseTransform):
             else:
                 raise ValueError("Illegal num_snippets option.")
 
-            snippet_offset_accident = accident_ind - int(np.ceil((self.snippet_len - 1) * frame_interval / 2))
+            snippet_offset_accident = accident_ind - (self.snippet_len - 1) * frame_interval
             snippet_offsets[0] = snippet_offset_accident
 
-        snippet_labels = np.where(
-            np.abs(snippet_offsets + (self.snippet_len - 1) * frame_interval / 2 - accident_ind + 0.25)
-            < frame_interval / 2,
-            1,
-            0,
+        snippet_labels = (snippet_offsets + (self.snippet_len - 1) * frame_interval >= accident_ind) & (
+            snippet_offsets + (self.snippet_len - 1) * frame_interval < accident_ind + frame_interval
         )
 
         frame_inds = np.concatenate(snippet_offsets[:, None] + snippet_inds[None, :])

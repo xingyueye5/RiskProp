@@ -275,9 +275,8 @@ class SnippetClsHead(FrameClsHead):
         Returns:
             Tensor: The classification scores for input samples.
         """
-        T = x.shape[2]
         # [N, C, T, H, W]
-        x = x[:, :, int(np.ceil((T - 1) / 2)), :, :]
+        x = x[:, :, -1, :, :]
         # [N, C, H, W]
         x = self.avg_pool(x)
         # [N, C, 1, 1]
@@ -289,6 +288,26 @@ class SnippetClsHead(FrameClsHead):
         cls_score = self.fc_cls(x)
         # [N, num_classes]
         return cls_score.squeeze()
+
+    def predict_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> SampleList:
+        """Transform a batch of output features extracted from the head into
+        prediction results.
+
+        Args:
+            cls_scores (torch.Tensor): Classification scores, has a shape
+                (B*num_segs, num_classes)
+            data_samples (list[:obj:`ActionDataSample`]): The
+                annotation data of every samples. It usually includes
+                information such as `gt_label`.
+
+        Returns:
+            List[:obj:`ActionDataSample`]: Recognition results wrapped
+                by :obj:`ActionDataSample`.
+        """
+        assert len(data_samples) == 1, "Test batch size must be 1!"
+        data_samples[0].set_pred_score(F.sigmoid(cls_scores))
+        data_samples[0].frame_inds = data_samples[0].frame_inds.reshape(-1, data_samples[0].clip_len)[:, -1]
+        return data_samples
 
 
 @MODELS.register_module()
