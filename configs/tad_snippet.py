@@ -267,7 +267,7 @@ train_cfg = dict(type="EpochBasedTrainLoop", max_epochs=50, val_begin=1, val_int
 default_hooks = dict(
     checkpoint=dict(type="CheckpointHook", interval=1, max_keep_ckpts=1, save_best="f_pre@max", rule="greater")
 )
-custom_hooks = [dict(type="EpochHook"), dict(type="MetricHook")]
+custom_hooks = [dict(type="EpochHook"), dict(type="DetectionMetricHook")]
 
 model = dict(
     type="Recognizer3D",

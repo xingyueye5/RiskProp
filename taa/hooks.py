@@ -13,7 +13,7 @@ class EpochHook(Hook):
 
 
 @HOOKS.register_module()
-class MetricHook(Hook):
+class DetectionMetricHook(Hook):
     def __init__(self):
         super().__init__()
         self.epochs = []
