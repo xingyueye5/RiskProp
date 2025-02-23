@@ -343,7 +343,7 @@ class AnticipationHead(BaseHead):
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
         activation: str = "relu",
-        observed_len: int = 6,
+        observed_len: int = 10,
         anticipated_len: int = 30,
         **kwargs,
     ) -> None:

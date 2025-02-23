@@ -118,7 +118,7 @@ class CustomSampleFrames(BaseTransform):
         frame_inds = frame_inds + results["start_index"]
         accident_frame = results["accident_frame"]
 
-        frame_labels = np.where(np.abs(frame_inds - accident_frame + 0.25) < frame_interval / 2, 1, 0)
+        frame_labels = (frame_inds >= accident_frame) & (frame_inds < accident_frame + frame_interval)
 
         results["frame_inds"] = frame_inds.astype(np.int32)
         results["label"] = frame_labels
@@ -239,6 +239,7 @@ class SampleFramesForAnticipation(BaseTransform):
         self.clip_len = clip_len
         self.num_clips = num_clips
         self.test_mode = test_mode
+        self.observed_len = 10
 
     def transform(self, results: dict) -> dict:
         """Perform the SampleFramesBeforeAccident loading.
@@ -264,13 +265,18 @@ class SampleFramesForAnticipation(BaseTransform):
             assert isinstance(self.clip_len, int)
             assert self.clip_len >= 1
             clip_inds = np.arange(self.clip_len) * frame_interval
-            clip_offsets = np.full(
-                self.num_clips, min(accident_frame + 5 * frame_interval, total_frames - 1 + start_index) - clip_inds[-1]
-            )
+            if np.random.rand() < 0.5:
+                clip_offsets = np.full(
+                    self.num_clips,
+                    min(accident_frame + (self.observed_len - 1) * frame_interval, total_frames - 1 + start_index)
+                    - clip_inds[-1],
+                )
+            else:
+                clip_offsets = np.full(self.num_clips, min(start_index, total_frames - 1 + start_index - clip_inds[-1]))
 
         frame_inds = np.concatenate(clip_offsets[:, None] + clip_inds[None, :])
         frame_inds = np.maximum(frame_inds, start_index)
-        frame_labels = (frame_inds >= accident_frame).astype(int)
+        frame_labels = (frame_inds == accident_frame).astype(int)
 
         results["frame_inds"] = frame_inds.astype(np.int32)
         results["label"] = frame_labels
