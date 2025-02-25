@@ -90,6 +90,12 @@ class AnticipationMetricHook(Hook):
         self.a_fpr_val = []
         self.a_rec_val = []
         self.a_tta_val = []
+        self.a_fpr_b_0_train = []
+        self.a_rec_b_0_train = []
+        self.a_tta_b_0_train = []
+        self.a_fpr_b_0_val = []
+        self.a_rec_b_0_val = []
+        self.a_tta_b_0_val = []
         self.d_fpr_train = []
         self.d_rec_1_train = []
         self.d_rec_5_train = []
@@ -127,19 +133,19 @@ class AnticipationMetricHook(Hook):
 
         plt.figure()
         if "a_fpr#b_0" in metrics and "a_rec#b_0" in metrics and "a_tta#b_0" in metrics:
-            self.a_fpr_train.append(metrics["a_fpr#b_0"])
-            self.a_rec_train.append(metrics["a_rec#b_0"])
-            self.a_tta_train.append(metrics["a_tta#b_0"] / 10)
-            plt.plot(self.epochs, self.a_fpr_train, label="a_fpr#b_0 (train)", marker="o", color="blue")
-            plt.plot(self.epochs, self.a_rec_train, label="a_rec#b_0 (train)", marker="o", color="red")
-            plt.plot(self.epochs, self.a_tta_train, label="a_tta#b_0 (train)", marker="o", color="green")
+            self.a_fpr_b_0_train.append(metrics["a_fpr#b_0"])
+            self.a_rec_b_0_train.append(metrics["a_rec#b_0"])
+            self.a_tta_b_0_train.append(metrics["a_tta#b_0"] / 10)
+            plt.plot(self.epochs, self.a_fpr_b_0_train, label="a_fpr#b_0 (train)", marker="o", color="blue")
+            plt.plot(self.epochs, self.a_rec_b_0_train, label="a_rec#b_0 (train)", marker="o", color="red")
+            plt.plot(self.epochs, self.a_tta_b_0_train, label="a_tta#b_0 (train)", marker="o", color="green")
         if "a_fpr@b_0" in metrics and "a_rec@b_0" in metrics and "a_tta@b_0" in metrics:
-            self.a_fpr_val.append(metrics["a_fpr@b_0"])
-            self.a_rec_val.append(metrics["a_rec@b_0"])
-            self.a_tta_val.append(metrics["a_tta@b_0"] / 10)
-            plt.plot(self.epochs, self.a_fpr_val, label="a_fpr@b_0 (val)", marker="o", color="purple")
-            plt.plot(self.epochs, self.a_rec_val, label="a_rec@b_0 (val)", marker="o", color="yellow")
-            plt.plot(self.epochs, self.a_tta_val, label="a_tta@b_0 (val)", marker="o", color="orange")
+            self.a_fpr_b_0_val.append(metrics["a_fpr@b_0"])
+            self.a_rec_b_0_val.append(metrics["a_rec@b_0"])
+            self.a_tta_b_0_val.append(metrics["a_tta@b_0"] / 10)
+            plt.plot(self.epochs, self.a_fpr_b_0_val, label="a_fpr@b_0 (val)", marker="o", color="purple")
+            plt.plot(self.epochs, self.a_rec_b_0_val, label="a_rec@b_0 (val)", marker="o", color="yellow")
+            plt.plot(self.epochs, self.a_tta_b_0_val, label="a_tta@b_0 (val)", marker="o", color="orange")
         plt.title("Anticipation Metrics")
         plt.xlabel("Epochs")
         plt.legend()
