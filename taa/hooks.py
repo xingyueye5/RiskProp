@@ -126,6 +126,32 @@ class AnticipationMetricHook(Hook):
         plt.close()
 
         plt.figure()
+        if "a_fpr#b_0" in metrics and "a_rec#b_0" in metrics and "a_tta#b_0" in metrics:
+            self.a_fpr_train.append(metrics["a_fpr#b_0"])
+            self.a_rec_train.append(metrics["a_rec#b_0"])
+            self.a_tta_train.append(metrics["a_tta#b_0"] / 10)
+            plt.plot(self.epochs, self.a_fpr_train, label="a_fpr#b_0 (train)", marker="o", color="blue")
+            plt.plot(self.epochs, self.a_rec_train, label="a_rec#b_0 (train)", marker="o", color="red")
+            plt.plot(self.epochs, self.a_tta_train, label="a_tta#b_0 (train)", marker="o", color="green")
+        if "a_fpr@b_0" in metrics and "a_rec@b_0" in metrics and "a_tta@b_0" in metrics:
+            self.a_fpr_val.append(metrics["a_fpr@b_0"])
+            self.a_rec_val.append(metrics["a_rec@b_0"])
+            self.a_tta_val.append(metrics["a_tta@b_0"] / 10)
+            plt.plot(self.epochs, self.a_fpr_val, label="a_fpr@b_0 (val)", marker="o", color="purple")
+            plt.plot(self.epochs, self.a_rec_val, label="a_rec@b_0 (val)", marker="o", color="yellow")
+            plt.plot(self.epochs, self.a_tta_val, label="a_tta@b_0 (val)", marker="o", color="orange")
+        plt.title("Anticipation Metrics")
+        plt.xlabel("Epochs")
+        plt.legend()
+        plt.legend()
+        plt.xlim(0, max(self.epochs) + 1)
+        plt.ylim(-0.1, 1.1)
+        plt.xticks(range(1, max(self.epochs) + 1, 1))
+        plt.yticks([i * 0.1 for i in range(0, 11)])
+        plt.savefig(osp.join(runner.log_dir, "metrics_anticipation_b_0.png"))
+        plt.close()
+
+        plt.figure()
         if "\nd_fpr#0.5" in metrics and "d_rec_1#0.5" in metrics and "d_rec_5#0.5" in metrics:
             self.d_fpr_train.append(metrics["\nd_fpr#0.5"])
             self.d_rec_1_train.append(metrics["d_rec_1#0.5"])

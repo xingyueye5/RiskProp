@@ -177,6 +177,7 @@ class AnticipationMetric(BaseMetric):
     def __init__(
         self,
         thresholds=[0.5],
+        a_fpr_benchmarks=[0.01],
         vis_list=[],
         output_dir=None,
         test_mode=True,
@@ -210,6 +211,7 @@ class AnticipationMetric(BaseMetric):
         self.metrics = metrics
         self.metric_options = metric_options
         self.thresholds = thresholds
+        self.a_fpr_benchmarks = a_fpr_benchmarks
         self.vis_list = vis_list
         self.output_dir = output_dir
         self.epoch = None
@@ -231,9 +233,9 @@ class AnticipationMetric(BaseMetric):
             result = dict()
             result["pred"] = data_sample["pred_score"].cpu().numpy()
             result["label"] = data_sample["gt_label"].cpu().numpy()
-            abnormal_start_ind = np.where(data_sample["frame_inds"] == data_sample["abnormal_start_frame"])[0]
+            abnormal_start_ind = np.where(data_sample["frame_inds"] >= data_sample["abnormal_start_frame"])[0]
             result["abnormal_start_ind"] = abnormal_start_ind[0] if abnormal_start_ind.size > 0 else 0
-            accident_ind = np.where(data_sample["frame_inds"] == data_sample["accident_frame"])[0]
+            accident_ind = np.where(data_sample["frame_inds"] >= data_sample["accident_frame"])[0]
             result["accident_ind"] = accident_ind[0] if accident_ind.size > 0 else 0
             self.results.append(result)
 
@@ -269,11 +271,19 @@ class AnticipationMetric(BaseMetric):
         """
         eval_results = OrderedDict()
         sep = "@" if self.test_mode else "#"
-        for t in self.thresholds:
-            preds_t = [pred >= t for pred in preds]
-            labels_t = [label == 1 for label in labels]
 
-            labels_video = np.array([np.any(label) for label in labels_t])
+        labels_video = np.array([np.any(label) for label in labels])
+
+        if len(preds[0].shape) == 1:
+            a = np.concatenate([pred[:i] for pred, i in zip(preds, abnormal_start_inds)])
+        else:
+            a = np.concatenate([np.max(pred[:i], axis=1) for pred, i in zip(preds, abnormal_start_inds)])
+        thresholds = [np.partition(a, -int(b * len(a)))[-int(b * len(a))] for b in self.a_fpr_benchmarks]
+
+        for index, t in enumerate(self.thresholds + thresholds):
+            preds_t = [pred >= t for pred in preds]
+
+            t = f"{t:.1f}" if index < len(self.thresholds) else f"b_{index - len(self.thresholds)}"
 
             if len(preds[0].shape) == 1:
                 alarms_video = np.array(
@@ -288,21 +298,17 @@ class AnticipationMetric(BaseMetric):
                     ]
                 )
 
-                eval_results[f"\nd_fpr{sep}{t:.1f}"] = 0
-                eval_results[f"d_rec_1{sep}{t:.1f}"] = 0
-                eval_results[f"d_rec_5{sep}{t:.1f}"] = 0
-                eval_results[f"a_fpr{sep}{t:.1f}"] = alarms_before_abnormal.sum() / len(alarms_before_abnormal)
-                eval_results[f"a_rec{sep}{t:.1f}"] = recall_score(labels_video, alarms_video, zero_division=0)
-                eval_results[f"a_tta{sep}{t:.1f}"] = sum(ttas) / len(ttas) if len(ttas) else 0
+                eval_results[f"\nd_fpr{sep}{t}"] = 0
+                eval_results[f"d_rec_1{sep}{t}"] = 0
+                eval_results[f"d_rec_5{sep}{t}"] = 0
+                eval_results[f"a_fpr{sep}{t}"] = alarms_before_abnormal.sum() / len(alarms_before_abnormal)
+                eval_results[f"a_rec{sep}{t}"] = recall_score(labels_video, alarms_video, zero_division=0)
+                eval_results[f"a_tta{sep}{t}"] = sum(ttas) / len(ttas) if len(ttas) else 0
                 continue
 
-            preds_video_1 = np.array([pred[np.argmax(label), 0] for pred, label in zip(preds_t, labels_t)])
-            preds_video_5 = np.array(
-                [np.any(pred[np.argmax(label) - 2 : np.argmax(label) + 3, 0]) for pred, label in zip(preds_t, labels_t)]
-            )
-            preds_before_accident = np.concatenate(
-                [pred[: np.argmax(label), 0] for pred, label in zip(preds_t, labels_t)]
-            )
+            preds_video_1 = np.array([pred[i, 0] for pred, i in zip(preds_t, accident_inds)])
+            preds_video_5 = np.array([np.any(pred[i - 2 : i + 3, 0]) for pred, i in zip(preds_t, accident_inds)])
+            preds_before_accident = np.concatenate([pred[:i, 0] for pred, i in zip(preds_t, accident_inds)])
             alarms_video = np.array(
                 [np.any(pred[i:j]) for pred, i, j in zip(preds_t, abnormal_start_inds, accident_inds)]
             )
@@ -317,12 +323,14 @@ class AnticipationMetric(BaseMetric):
                 ]
             )
 
-            eval_results[f"\nd_fpr{sep}{t:.1f}"] = preds_before_accident.sum() / len(preds_before_accident)
-            eval_results[f"d_rec_1{sep}{t:.1f}"] = recall_score(labels_video, preds_video_1, zero_division=0)
-            eval_results[f"d_rec_5{sep}{t:.1f}"] = recall_score(labels_video, preds_video_5, zero_division=0)
-            eval_results[f"a_fpr{sep}{t:.1f}"] = alarms_before_abnormal.sum() / len(alarms_before_abnormal)
-            eval_results[f"a_rec{sep}{t:.1f}"] = recall_score(labels_video, alarms_video, zero_division=0)
-            eval_results[f"a_tta{sep}{t:.1f}"] = sum(ttas) / len(ttas) if len(ttas) else 0
+            eval_results[f"\nd_fpr{sep}{t}"] = preds_before_accident.sum() / len(preds_before_accident)
+            eval_results[f"d_rec_1{sep}{t}"] = recall_score(labels_video, preds_video_1, zero_division=0)
+            eval_results[f"d_rec_5{sep}{t}"] = recall_score(labels_video, preds_video_5, zero_division=0)
+            eval_results[f"a_fpr{sep}{t}"] = alarms_before_abnormal.sum() / len(alarms_before_abnormal)
+            eval_results[f"a_rec{sep}{t}"] = recall_score(labels_video, alarms_video, zero_division=0)
+            eval_results[f"a_tta{sep}{t}"] = sum(ttas) / len(ttas) if len(ttas) else 0
 
         eval_results[f"\n{sep}num_samples"] = len(labels)
+        for index, t in enumerate(thresholds):
+            eval_results[f"threshold{sep}b_{index}"] = t
         return eval_results
