@@ -455,15 +455,23 @@ class AnticipationHead(BaseHead):
         """
         tgt, x, inds, mask, cls_scores = feats
 
-        # loss_mse = (F.mse_loss(tgt, x.detach(), reduction="none").mean(dim=1) * ~mask).mean()
+        labels = [data_sample.gt_label[inds].reshape(-1, self.anticipated_len) for data_sample in data_samples]
+        abnormal_lens = [
+            (data_sample.accident_frame - data_sample.abnormal_start_frame) // data_sample.frame_interval
+            for data_sample in data_samples
+        ]
+        for label, abnormal_len in zip(labels, abnormal_lens):
+            label[:, self.observed_len + abnormal_len :] = 0
+        labels = torch.concatenate(labels).flatten().float()
 
-        labels = [data_sample.gt_label[inds] for data_sample in data_samples]
-        labels = torch.concatenate(labels).float()
-
-        # loss_cls = (self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight, reduction="none") * ~mask).mean()
         loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
 
-        # return dict(loss_mse=loss_mse, loss_cls=loss_cls)
+        # loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight, reduction="none").reshape(
+        #     -1, self.anticipated_len
+        # )
+        # weights = 1 - torch.arange(self.anticipated_len, device=loss_cls.device) / self.anticipated_len
+        # loss_cls = (loss_cls * weights[None, :]).mean()
+
         return dict(loss_cls=loss_cls)
 
     def predict_by_feat(self, feats, data_samples: SampleList) -> SampleList:
@@ -488,6 +496,102 @@ class AnticipationHead(BaseHead):
         )
         data_samples[0].set_gt_label(data_samples[0].gt_label[self.observed_len - 1 :])
         data_samples[0].frame_inds = data_samples[0].frame_inds[self.observed_len - 1 :]
+        return data_samples
+
+
+@MODELS.register_module()
+class SnippetAnticipationHead(AnticipationHead):
+    def forward(self, x, **kwargs) -> None:
+        """Defines the computation performed at every call.
+
+        Args:
+            x (Tensor): The input data.
+
+        Returns:
+            Tensor: The classification scores for input samples.
+        """
+        N, C, T, H, W = x.shape
+        # [N, C, T, H, W]
+        x = x.permute(0, 2, 1, 3, 4)
+        # [N, T, C, H, W]
+        x = x.reshape(N * T, C, H, W)
+        # [N * T, C, H, W]
+        x = self.avg_pool(x)
+        # [N * T, C, 1, 1]
+        x = x.squeeze()
+        # [N * T, C]
+        x = x.reshape(N, T, C)
+        # [N, T, C]
+
+        assert self.observed_len == T
+        tgt_pos = self.pos()[:, : self.anticipated_len, :]
+        memory_pos = self.pos()[:, : self.observed_len, :]
+        tgt = torch.zeros_like(tgt_pos).expand(N, -1, -1)
+        tgt = self.decoder(tgt, x, tgt_pos=tgt_pos, memory_pos=memory_pos)
+        # [N, anticipated_len, C]
+
+        tgt = tgt.reshape(-1, self.in_channels)  # [N * anticipated_len, in_channels]
+
+        output = tgt
+        if self.dropout is not None:
+            output = self.dropout(output)
+        cls_scores = self.fc_cls(output).squeeze()
+        return tgt, cls_scores
+
+    def loss_by_feat(self, feats, data_samples: SampleList) -> Dict:
+        """Calculate the loss based on the features extracted by the head.
+
+        Args:
+            cls_scores (torch.Tensor): Classification prediction results of
+                all class, has shape (batch_size, num_classes).
+            data_samples (list[:obj:`ActionDataSample`]): The batch
+                data samples.
+
+        Returns:
+            dict: A dictionary of loss components.
+        """
+        _, cls_scores = feats
+
+        labels = []
+        for data_sample in data_samples:
+            offsets = data_sample.frame_inds[:: data_sample.clip_len]
+            index = np.ceil((data_sample.accident_frame - offsets) / data_sample.frame_interval).astype(int)
+            label = np.eye(1000)[index, : self.anticipated_len]
+            label = label * (offsets >= data_sample.abnormal_start_frame)[:, None]
+            labels.append(torch.from_numpy(label))
+        labels = torch.concatenate(labels).flatten().float().to(cls_scores.device)
+
+        loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
+
+        # loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight, reduction="none").reshape(
+        #     -1, self.anticipated_len
+        # )
+        # weights = 1 - torch.arange(self.anticipated_len, device=loss_cls.device) / self.anticipated_len
+        # loss_cls = (loss_cls * weights[None, :]).mean()
+
+        return dict(loss_cls=loss_cls)
+
+    def predict_by_feat(self, feats, data_samples: SampleList) -> SampleList:
+        """Transform a batch of output features extracted from the head into
+        prediction results.
+
+        Args:
+            cls_scores (torch.Tensor): Classification scores, has a shape
+                (B*num_segs, num_classes)
+            data_samples (list[:obj:`ActionDataSample`]): The
+                annotation data of every samples. It usually includes
+                information such as `gt_label`.
+
+        Returns:
+            List[:obj:`ActionDataSample`]: Recognition results wrapped
+                by :obj:`ActionDataSample`.
+        """
+        assert len(data_samples) == 1, "Test batch size must be 1!"
+        _, cls_scores = feats
+        data_samples[0].set_pred_score(
+            F.sigmoid(cls_scores.reshape(-1, self.anticipated_len)[:, self.observed_len - 1 :])
+        )
+        data_samples[0].frame_inds = data_samples[0].frame_inds.reshape(-1, data_samples[0].clip_len)[:, -1]
         return data_samples
 
 

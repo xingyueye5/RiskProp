@@ -287,6 +287,86 @@ class SampleFramesForAnticipation(BaseTransform):
 
 
 @TRANSFORMS.register_module()
+class SampleSnippetsForAnticipation(BaseTransform):
+    """Sample snippets for anticipation task.
+
+    Required Keys:
+
+        - total_frames
+        - start_index
+
+    Added Keys:
+
+        - frame_inds
+        - frame_interval
+        - num_clips
+
+    Args:
+        snippet_len (int): Frames of each sampled output snippet.
+        num_snippets (int): Number of snippets to be sampled. Default: 1.
+        test_mode (bool): Store True when building test or validation dataset.
+            Defaults to False.
+    """
+
+    def __init__(
+        self, snippet_len: int = 5, num_snippets: Optional[int] = None, test_mode: bool = False, **kwargs
+    ) -> None:
+        self.snippet_len = snippet_len
+        self.num_snippets = num_snippets
+        self.test_mode = test_mode
+
+    def transform(self, results: dict) -> dict:
+        """Perform the SampleSnippetsForAnticipation loading.
+
+        Args:
+            results (dict): The resulting dict to be modified and passed
+                to the next transform in pipeline.
+        """
+        total_frames = results["total_frames"]
+        assert results["fps"] in [30, 20, 10]
+        frame_interval = results["fps"] // 10
+
+        accident_frame = results["accident_frame"]
+        start_index = results["start_index"]
+        accident_ind = accident_frame - start_index
+
+        snippet_inds = np.arange(self.snippet_len) * frame_interval
+        snippet_offset_max = total_frames - (self.snippet_len - 1) * frame_interval
+        assert snippet_offset_max > 0
+
+        if self.test_mode:
+            # dense sample from the full video
+            assert self.num_snippets is None
+            num_snippets_max = int(1000 / self.snippet_len)
+            if snippet_offset_max <= frame_interval * num_snippets_max:
+                snippet_offsets = np.arange(0, snippet_offset_max, step=frame_interval)
+            else:
+                # Prevent CUDA out of memory
+                snippet_offsets = np.arange(
+                    max(accident_ind - frame_interval * (num_snippets_max - 10), 0),
+                    min(accident_ind + frame_interval * 10, snippet_offset_max),
+                    step=frame_interval,
+                )
+        else:
+            assert isinstance(self.num_snippets, int)
+            assert self.num_snippets >= 1
+            snippet_offsets = np.random.randint(0, min(accident_ind + 1, snippet_offset_max), size=self.num_snippets)
+
+        snippet_labels = (snippet_offsets + (self.snippet_len - 1) * frame_interval >= accident_ind) & (
+            snippet_offsets + (self.snippet_len - 1) * frame_interval < accident_ind + frame_interval
+        )
+
+        frame_inds = np.concatenate(snippet_offsets[:, None] + snippet_inds[None, :])
+        frame_inds = np.minimum(frame_inds, total_frames - 1) + start_index
+        results["frame_inds"] = frame_inds.astype(np.int32)
+        results["label"] = snippet_labels
+        results["clip_len"] = self.snippet_len
+        results["frame_interval"] = frame_interval
+        results["num_clips"] = len(snippet_offsets)
+        return results
+
+
+@TRANSFORMS.register_module()
 class VisualizeInputsAsVideos(BaseTransform):
     """Visualize inputs as videos and save them to the specified directory.
 

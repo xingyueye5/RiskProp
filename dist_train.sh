@@ -1,4 +1,4 @@
-name=taa
+name=taa_snippet
 
 current_datetime=$(date +"%Y%m%d_%H%M%S")
 mkdir -p codes/$name/$current_datetime
