@@ -109,7 +109,7 @@ algorithm_keys = (
 file_client_args = dict(io_backend="disk")
 
 train_pipeline = [
-    dict(type="SampleFramesForAnticipation", clip_len=50, num_clips=1, test_mode=False),
+    dict(type="SampleFramesBeforeAccident", clip_len=50, num_clips=1, test_mode=False),
     dict(type="RawFrameDecode", **file_client_args),
     dict(type="Resize", scale=(512, 512), keep_ratio=False),
     dict(type="RandomResizedCrop", area_range=(0.8, 1.0), aspect_ratio_range=(1.0, 5 / 4)),
@@ -120,7 +120,7 @@ train_pipeline = [
     # dict(type="VisualizeInputsAsVideos", output_dir="visualizations/inputs_train"),
 ]
 val_pipeline = [
-    dict(type="SampleFramesForAnticipation", clip_len=None, num_clips=1, test_mode=True),
+    dict(type="SampleFramesBeforeAccident", clip_len=None, num_clips=1, test_mode=True),
     dict(type="RawFrameDecode", **file_client_args),
     dict(type="Resize", scale=(224, 224), keep_ratio=False),
     # dict(type="CenterCrop", crop_size=224),
@@ -161,36 +161,19 @@ val_dataloader = dict(
 )
 test_dataloader = val_dataloader
 
-val_evaluator = [
-    dict(
-        type="AnticipationMetric",
-        thresholds=[x * 0.1 for x in range(1, 10)],
-        test_mode=False,
-    ),
-    dict(
+val_evaluator = dict(
         type="AnticipationMetric",
         thresholds=[x * 0.1 for x in range(1, 10)],
         vis_list=vis_list,
         output_dir="visualizations/outputs_test",
-    ),
-]
+    )
 test_evaluator = val_evaluator
 
 train_cfg = dict(type="EpochBasedTrainLoop", max_epochs=50, val_begin=1, val_interval=1)
 
-# param_scheduler = [
-#     dict(
-#         type='MultiStepLR',
-#         begin=0,
-#         end=50,
-#         by_epoch=True,
-#         milestones=[5, 10, 15, 20],
-#         gamma=0.1)
-# ]
-
 # 每轮都保存权重，并且只保留最新的权重
 default_hooks = dict(
-    checkpoint=dict(type="CheckpointHook", interval=1, max_keep_ckpts=1, save_best="a_fpr@0.5", rule="less")
+    checkpoint=dict(type="CheckpointHook", interval=1, max_keep_ckpts=1, save_best="a_tta@b_0", rule="greater")
 )
 custom_hooks = [dict(type="EpochHook"), dict(type="AnticipationMetricHook")]
 
@@ -200,7 +183,7 @@ model = dict(
         type="ResNet", pretrained="https://download.pytorch.org/models/resnet50-11ad3fa6.pth", depth=50, norm_eval=False
     ),
     cls_head=dict(
-        type="AnticipationHead",
+        type="OccurrenceHeadFromFrames",
         num_classes=1,
         loss_cls=dict(type="BCELossWithLogits"),
         pos_weight=10,

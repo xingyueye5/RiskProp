@@ -59,9 +59,11 @@ class CapData(BaseActionDataset):
         start_index: int = 1,
         modality: str = "RGB",
         test_mode: bool = False,
+        val_train: bool = False,
         **kwargs,
     ) -> None:
         self.filename_tmpl = filename_tmpl
+        self.val_train = val_train
         super().__init__(
             ann_file,
             pipeline=pipeline,
@@ -114,9 +116,8 @@ class CapData(BaseActionDataset):
                 continue
 
             # keep the test videos
-            if self.test_mode and video_id not in cap_test.keys():
-                # continue
-                pass
+            if self.test_mode and not self.val_train and video_id not in cap_test.keys():
+                continue
 
             correct_total_frames = {
                 "005722": 78,
@@ -214,9 +215,11 @@ class DadaData(BaseActionDataset):
         start_index: int = 1,
         modality: str = "RGB",
         test_mode: bool = False,
+        val_train: bool = False,
         **kwargs,
     ) -> None:
         self.filename_tmpl = filename_tmpl
+        self.val_train = val_train
         super().__init__(
             ann_file,
             pipeline=pipeline,
@@ -246,10 +249,6 @@ class DadaData(BaseActionDataset):
             frame_dir = osp.join(self.data_prefix["img"], str(line[5]), video_id, "images")
             video_id = f"{line[5]}_{video_id}"
 
-            # skip the broken videos
-            # if video_id in ["011665", "008728", "004928", "007155"]:
-            # continue
-
             # skip the videos without accidents
             if line[8] == -1:
                 continue
@@ -263,9 +262,8 @@ class DadaData(BaseActionDataset):
                 continue
 
             # keep the test videos
-            if self.test_mode and video_id not in dada_test.keys():
-                # continue
-                pass
+            if self.test_mode and not self.val_train and video_id not in dada_test.keys():
+                continue
 
             correct_total_frames = {
                 "5_040": 382,

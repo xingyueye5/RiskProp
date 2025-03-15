@@ -1,4 +1,4 @@
-name=taa_snippet
+name=predict_occurrence_snippet
 
 current_datetime=$(date +"%Y%m%d_%H%M%S")
 mkdir -p codes/$name/$current_datetime

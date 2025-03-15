@@ -98,18 +98,18 @@ def visualize_tensor_as_videos(tensor, output_dir, fps=10):
     print(f"所有视频已保存到：{output_dir}")
 
 
-def visualize_pred_score(data_sample, result, output_dir, epoch=None, fps=10):
-    frame_dir = data_sample["frame_dir"]
-    filename_tmpl = data_sample["filename_tmpl"]
-    frame_inds = data_sample["frame_inds"]
-    abnormal_start_frame = data_sample["abnormal_start_frame"]
-    abnormal_end_frame = data_sample["abnormal_end_frame"]
-    accident_frame = data_sample["accident_frame"]
-    start_index = data_sample["start_index"]
-    video_id = data_sample["video_id"]
-    type = data_sample["type"]
+def visualize_pred_score(result, output_dir, epoch=None, fps=10):
     pred = result["pred"]
     label = result["label"]
+    frame_dir = result["frame_dir"]
+    filename_tmpl = result["filename_tmpl"]
+    frame_inds = result["frame_inds"]
+    abnormal_start_frame = result["abnormal_start_frame"]
+    abnormal_end_frame = result["abnormal_end_frame"]
+    accident_frame = result["accident_frame"]
+    video_id = result["video_id"]
+    type = result["type"]
+    threshold = result["threshold"]
 
     os.makedirs(output_dir, exist_ok=True)
     # 创建视频保存路径
@@ -129,42 +129,100 @@ def visualize_pred_score(data_sample, result, output_dir, epoch=None, fps=10):
         if frame_ind < abnormal_start_frame:
             # 绘制绿色条带
             cv2.rectangle(frame, (0, 0), (640, 36), (0, 255, 0), -1)
+            cv2.putText(
+                frame,
+                "Safe Scene",
+                (420, 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.72,
+                (255, 255, 255),
+                2,
+            )
         elif abnormal_start_frame <= frame_ind < accident_frame:
             # 绘制蓝色条带
             cv2.rectangle(frame, (0, 0), (640, 36), (255, 0, 0), -1)
+            cv2.putText(
+                frame,
+                "Anomaly Appeared",
+                (420, 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.72,
+                (255, 255, 255),
+                2,
+            )
         elif accident_frame <= frame_ind < abnormal_end_frame:
             # 绘制红色条带
             cv2.rectangle(frame, (0, 0), (640, 36), (0, 0, 255), -1)
+            cv2.putText(
+                frame,
+                "Accident Occurred",
+                (420, 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.72,
+                (255, 255, 255),
+                2,
+            )
         elif abnormal_end_frame <= frame_ind:
             # 绘制灰色条带
             cv2.rectangle(frame, (0, 0), (640, 36), (128, 128, 128), -1)
-        # 绘制预测分数
-        if len(pred.shape) == 1:
             cv2.putText(
                 frame,
-                f"Pred: {pred[i]:.2f}  Label: {int(label[i])}  " + "*" * int(pred[i] * 10 // 1),
-                (20, 27),
+                "Accident Ended",
+                (420, 25),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
+                0.72,
+                (255, 255, 255),
+                2,
+            )
+        # 绘制预测分数
+        if len(pred.shape) == 1:
+            if pred[i] >= threshold:
+                cv2.rectangle(frame, (0, 0), (640, 360), (0, 0, 255), 5)
+            cv2.putText(
+                frame,
+                f"Score: {pred[i]:.2f}  " + "*" * int(pred[i] * 10 // 1),
+                (20, 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.72,
                 (255, 255, 255),
                 2,
             )
         if len(pred.shape) == 2:
+            if np.max(pred[i]) >= threshold:
+                cv2.rectangle(frame, (0, 0), (640, 360), (0, 0, 255), 5)
             cv2.putText(
                 frame,
-                f"Pred: {pred[i][0]:.2f}  Label: {int(label[i])}  " + "*" * int(pred[i][0] * 10 // 1),
-                (20, 27),
+                f"Score: {np.max(pred[i]):.2f}  " + "*" * int(np.max(pred[i]) * 10 // 1),
+                (20, 25),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
+                0.72,
                 (255, 255, 255),
                 2,
             )
-            for j in range(1, len(pred[i])):
+            cv2.putText(
+                frame,
+                "Time. Pred  L  Visualization",
+                (20, 52),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (255, 255, 255),
+                2,
+            )
+            cv2.putText(
+                frame,
+                "Time. Pred  L  Visualization",
+                (20, 52),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (0, 0, 255),
+                1,
+            )
+            for j in range(len(pred[i])):
                 l = "?" if i + j >= len(label) else int(label[i + j])
                 cv2.putText(
                     frame,
-                    f"{j/fps:.1f}s:  {pred[i][j]:.2f}  {l}  " + "*" * int(pred[i][j] * 10 // 1),
-                    (20, 40 + 12 * j),
+                    f"{j/fps:.1f}s  {pred[i][j]:.2f}  {l}  " + "*" * int(pred[i][j] * 10 // 1),
+                    (20, 64 + 12 * j),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.4,
                     (255, 255, 255),
@@ -172,8 +230,8 @@ def visualize_pred_score(data_sample, result, output_dir, epoch=None, fps=10):
                 )
                 cv2.putText(
                     frame,
-                    f"{j/fps:.1f}s:  {pred[i][j]:.2f}  {l}  " + "*" * int(pred[i][j] * 10 // 1),
-                    (20, 40 + 12 * j),
+                    f"{j/fps:.1f}s  {pred[i][j]:.2f}  {l}  " + "*" * int(pred[i][j] * 10 // 1),
+                    (20, 64 + 12 * j),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.4,
                     (0, 0, 255),
