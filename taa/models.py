@@ -27,9 +27,6 @@ class AnomalyHeadFromFrames(BaseHead):
         in_channels (int): Number of channels in input feature.
         loss_cls (dict or ConfigDict): Config for building loss.
             Default: dict(type='CrossEntropyLoss').
-        spatial_type (str or ConfigDict): Pooling type in spatial dimension.
-            Default: 'avg'.
-        consensus (dict): Consensus config dict.
         dropout_ratio (float): Probability of dropout layer. Default: 0.4.
         init_std (float): Std value for Initiation. Default: 0.01.
         kwargs (dict, optional): Any keyword argument to be used to initialize
@@ -42,7 +39,6 @@ class AnomalyHeadFromFrames(BaseHead):
         in_channels: int = 2048,
         loss_cls: ConfigType = dict(type="CrossEntropyLoss"),
         pos_weight: float = 1,
-        spatial_type: str = "avg",
         dropout_ratio: float = 0.4,
         init_std: float = 0.01,
         rnn_hidden_size: int = 512,
@@ -53,20 +49,10 @@ class AnomalyHeadFromFrames(BaseHead):
     ) -> None:
         super().__init__(num_classes, in_channels, loss_cls=loss_cls, **kwargs)
 
-        self.spatial_type = spatial_type
         self.dropout_ratio = dropout_ratio
         self.init_std = init_std
-
-        if self.spatial_type == "avg":
-            # use `nn.AdaptiveAvgPool2d` to adaptively match the in_channels.
-            self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        else:
-            self.avg_pool = None
-
-        if self.dropout_ratio != 0:
-            self.dropout = nn.Dropout(p=self.dropout_ratio)
-        else:
-            self.dropout = None
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.dropout = nn.Dropout(p=self.dropout_ratio)
 
         self.rnn_hidden_size = rnn_hidden_size
         self.rnn_num_layers = rnn_num_layers
@@ -110,8 +96,7 @@ class AnomalyHeadFromFrames(BaseHead):
         # [N, num_segs, rnn_hidden_size]
         x = x.reshape(-1, self.rnn_hidden_size)
         # [N * num_segs, rnn_hidden_size]
-        if self.dropout is not None:
-            x = self.dropout(x)
+        x = self.dropout(x)
         # [N * num_segs, rnn_hidden_size]
         cls_score = self.fc_cls(x)
         # [N * num_segs, num_classes]
@@ -171,8 +156,7 @@ class AnomalyHeadFromSnippets(BaseHead):
         in_channels (int): Number of channels in input feature.
         loss_cls (dict or ConfigDict): Config for building loss.
             Default: dict(type='CrossEntropyLoss').
-        spatial_type (str): Pooling type in spatial dimension. Default: 'avg'.
-        dropout_ratio (float): Probability of dropout layer. Default: 0.8.
+        dropout_ratio (float): Probability of dropout layer. Default: 0.4.
         init_std (float): Std value for Initiation. Default: 0.01.
         kwargs (dict, optional): Any keyword argument to be used to initialize
             the head.
@@ -184,28 +168,16 @@ class AnomalyHeadFromSnippets(BaseHead):
         in_channels: int = 2048,
         loss_cls: ConfigType = dict(type="CrossEntropyLoss"),
         pos_weight: float = 1,
-        spatial_type: str = "avg",
         dropout_ratio: float = 0.4,
         init_std: float = 0.01,
         **kwargs,
     ) -> None:
         super().__init__(num_classes, in_channels, loss_cls=loss_cls, **kwargs)
 
-        self.spatial_type = spatial_type
         self.dropout_ratio = dropout_ratio
         self.init_std = init_std
-
-        if self.spatial_type == "avg":
-            # use `nn.AdaptiveAvgPool2d` to adaptively match the in_channels.
-            self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        else:
-            self.avg_pool = None
-
-        if self.dropout_ratio != 0:
-            self.dropout = nn.Dropout(p=self.dropout_ratio)
-        else:
-            self.dropout = None
-
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.dropout = nn.Dropout(p=self.dropout_ratio)
         self.fc_cls = nn.Linear(self.in_channels, self.num_classes)
         self.pos_weight = torch.tensor(pos_weight)
 
@@ -229,8 +201,7 @@ class AnomalyHeadFromSnippets(BaseHead):
         # [N, C, 1, 1]
         x = x.squeeze()
         # [N, C]
-        if self.dropout is not None:
-            x = self.dropout(x)
+        x = self.dropout(x)
         # [N, C]
         cls_score = self.fc_cls(x)
         # [N, num_classes]
@@ -251,12 +222,9 @@ class AnomalyHeadFromSnippets(BaseHead):
 
         labels = []
         for data_sample in data_samples:
-            label = (
-                data_sample.frame_inds[data_sample.clip_len - 1 :: data_sample.clip_len]
-                >= data_sample.abnormal_start_frame
-            ) & (
-                data_sample.frame_inds[data_sample.clip_len - 1 :: data_sample.clip_len]
-                < data_sample.accident_frame + data_sample.frame_interval
+            frame_inds = data_sample.frame_inds.reshape(-1, data_sample.clip_len)[:, -1]
+            label = (frame_inds >= data_sample.abnormal_start_frame) & (
+                frame_inds < data_sample.accident_frame + data_sample.frame_interval
             )
             labels.append(torch.from_numpy(label))
         labels = torch.concatenate(labels).float().to(cls_scores.device)
@@ -295,9 +263,6 @@ class OccurrenceHeadFromFrames(BaseHead):
         in_channels (int): Number of channels in input feature.
         loss_cls (dict or ConfigDict): Config for building loss.
             Default: dict(type='CrossEntropyLoss').
-        spatial_type (str or ConfigDict): Pooling type in spatial dimension.
-            Default: 'avg'.
-        consensus (dict): Consensus config dict.
         dropout_ratio (float): Probability of dropout layer. Default: 0.4.
         init_std (float): Std value for Initiation. Default: 0.01.
         kwargs (dict, optional): Any keyword argument to be used to initialize
@@ -310,8 +275,6 @@ class OccurrenceHeadFromFrames(BaseHead):
         in_channels: int = 2048,
         loss_cls: ConfigType = dict(type="CrossEntropyLoss"),
         pos_weight: float = 1,
-        spatial_type: str = "avg",
-        consensus: ConfigType = dict(type="AvgConsensus", dim=1),
         dropout_ratio: float = 0.4,
         init_std: float = 0.01,
         num_heads: int = 8,
@@ -319,34 +282,16 @@ class OccurrenceHeadFromFrames(BaseHead):
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
         activation: str = "relu",
-        observed_len: int = 10,
-        anticipated_len: int = 30,
+        observed_len: int = 5,
+        anticipated_len: int = 25,
         **kwargs,
     ) -> None:
         super().__init__(num_classes, in_channels, loss_cls=loss_cls, **kwargs)
 
-        self.spatial_type = spatial_type
         self.dropout_ratio = dropout_ratio
         self.init_std = init_std
-
-        consensus_ = consensus.copy()
-
-        consensus_type = consensus_.pop("type")
-        if get_str_type(consensus_type) == "AvgConsensus":
-            self.consensus = AvgConsensus(**consensus_)
-        else:
-            self.consensus = None
-
-        if self.spatial_type == "avg":
-            # use `nn.AdaptiveAvgPool2d` to adaptively match the in_channels.
-            self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        else:
-            self.avg_pool = None
-
-        if self.dropout_ratio != 0:
-            self.dropout = nn.Dropout(p=self.dropout_ratio)
-        else:
-            self.dropout = None
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.dropout = nn.Dropout(p=self.dropout_ratio)
         self.fc_cls = nn.Linear(self.in_channels, self.num_classes)
         self.pos_weight = torch.tensor(pos_weight)
 
@@ -412,8 +357,7 @@ class OccurrenceHeadFromFrames(BaseHead):
         mask_anticipated = mask_anticipated.repeat(x.shape[0])  # [N * num_snippets * anticipated_len]
 
         output = tgt
-        if self.dropout is not None:
-            output = self.dropout(output)
+        output = self.dropout(output)
         cls_scores = self.fc_cls(output).squeeze()
         return tgt, x_anticipated, inds_anticipated, mask_anticipated, cls_scores
 
@@ -441,12 +385,6 @@ class OccurrenceHeadFromFrames(BaseHead):
         labels = torch.concatenate(labels).flatten().float()
 
         loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
-
-        # loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight, reduction="none").reshape(
-        #     -1, self.anticipated_len
-        # )
-        # weights = 1 - torch.arange(self.anticipated_len, device=loss_cls.device) / self.anticipated_len
-        # loss_cls = (loss_cls * weights[None, :]).mean()
 
         return dict(loss_cls=loss_cls)
 
@@ -509,8 +447,7 @@ class OccurrenceHeadFromSnippets(OccurrenceHeadFromFrames):
         tgt = tgt.reshape(-1, self.in_channels)  # [N * anticipated_len, in_channels]
 
         output = tgt
-        if self.dropout is not None:
-            output = self.dropout(output)
+        output = self.dropout(output)
         cls_scores = self.fc_cls(output).squeeze()
         return tgt, cls_scores
 
@@ -538,12 +475,6 @@ class OccurrenceHeadFromSnippets(OccurrenceHeadFromFrames):
         labels = torch.concatenate(labels).flatten().float().to(cls_scores.device)
 
         loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
-
-        # loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight, reduction="none").reshape(
-        #     -1, self.anticipated_len
-        # )
-        # weights = 1 - torch.arange(self.anticipated_len, device=loss_cls.device) / self.anticipated_len
-        # loss_cls = (loss_cls * weights[None, :]).mean()
 
         return dict(loss_cls=loss_cls)
 
