@@ -111,10 +111,9 @@ file_client_args = dict(io_backend="disk")
 train_pipeline = [
     dict(type="SampleSnippetsBeforeAccident", snippet_len=5, num_snippets=10, test_mode=False),
     dict(type="RawFrameDecode", **file_client_args),
-    dict(type="Resize", scale=(512, 512), keep_ratio=False),
-    dict(type="RandomResizedCrop", area_range=(0.8, 1.0), aspect_ratio_range=(1.0, 5 / 4)),
+    dict(type="RandomResizedCrop", area_range=(0.8, 1.0), aspect_ratio_range=(4 / 3, 16 / 9)),
     dict(type="Resize", scale=(224, 224), keep_ratio=False),
-    # dict(type="Flip", flip_ratio=0.5),
+    dict(type="Flip", flip_ratio=0.5),
     dict(type="FormatShape", input_format="NCTHW"),
     dict(type="PackActionInputs", meta_keys=(), algorithm_keys=algorithm_keys),
     # dict(type="VisualizeInputsAsVideos", output_dir="visualizations/inputs_train"),
