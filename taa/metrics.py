@@ -283,27 +283,27 @@ class NewAnticipationMetric(DetectionMetric):
                 for pred, i in zip(preds, accident_inds)
             ]
             tta_list.append(sum(ttas) / len(ttas))
+        eval_results[f"auc{sep}0.1"] = sum(tta_list[: int(len(tta_list) * 0.1)]) / int(len(tta_list) * 0.1)
 
-        data = dict(fpr=[(i + 1) / len(preds_before_abnormal) for i in range(len(preds_before_abnormal))], tta=tta_list)
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(dict(fpr=[(i + 1) / len(tta_list) for i in range(len(tta_list))], tta=tta_list))
         os.makedirs("outputs", exist_ok=True)
         df.to_csv(f"outputs/fpr_tta_{self.epoch}.csv", index=False)
 
-        preds_5 = [np.max(pred[i - 5 : i]) for pred, i in zip(preds, accident_inds) if i >= 20]
-        preds_10 = [np.max(pred[i - 10 : i - 5]) for pred, i in zip(preds, accident_inds) if i >= 20]
-        preds_15 = [np.max(pred[i - 15 : i - 10]) for pred, i in zip(preds, accident_inds) if i >= 20]
-        preds_20 = [np.max(pred[i - 20 : i - 15]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_0 = [np.max(pred[i - 5 : i]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_5 = [np.max(pred[i - 10 : i - 5]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_10 = [np.max(pred[i - 15 : i - 10]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_15 = [np.max(pred[i - 20 : i - 15]) for pred, i in zip(preds, accident_inds) if i >= 20]
         preds_n = [np.max(pred[:5]) for pred, i in zip(preds, accident_inds) if i >= 20]
         labels = [1] * len(preds_n) + [0] * len(preds_n)
+        eval_results[f"AP{sep}0.0s"] = average_precision_score(labels, preds_0 + preds_n)
         eval_results[f"AP{sep}0.5s"] = average_precision_score(labels, preds_5 + preds_n)
         eval_results[f"AP{sep}1.0s"] = average_precision_score(labels, preds_10 + preds_n)
         eval_results[f"AP{sep}1.5s"] = average_precision_score(labels, preds_15 + preds_n)
-        eval_results[f"AP{sep}2.0s"] = average_precision_score(labels, preds_20 + preds_n)
         eval_results[f"mAP{sep}"] = (
-            eval_results[f"AP{sep}0.5s"]
+            eval_results[f"AP{sep}0.0s"]
+            + eval_results[f"AP{sep}0.5s"]
             + eval_results[f"AP{sep}1.0s"]
             + eval_results[f"AP{sep}1.5s"]
-            + eval_results[f"AP{sep}2.0s"]
         ) / 4
 
         eval_results[f"num_samples{sep}"] = len(preds)

@@ -191,32 +191,38 @@ class NewAnticipationMetricHook(Hook):
         self.epochs = []
         self.fpr_train = []
         self.tta_train = []
+        self.auc_train = []
+        self.AP0_train = []
         self.AP5_train = []
         self.AP10_train = []
         self.AP15_train = []
-        self.AP20_train = []
         self.mAP_train = []
         self.fpr_val = []
         self.tta_val = []
+        self.auc_val = []
+        self.AP0_val = []
         self.AP5_val = []
         self.AP10_val = []
         self.AP15_val = []
-        self.AP20_val = []
         self.mAP_val = []
 
     def after_val_epoch(self, runner, metrics) -> None:
         self.epochs.append(runner.epoch)
         plt.figure()
-        if "\nfpr#0.5" in metrics and "tta#0.5" in metrics:
+        if "\nfpr#0.5" in metrics and "tta#0.5" in metrics and "auc#0.1" in metrics:
             self.fpr_train.append(metrics["\nfpr#0.5"])
             self.tta_train.append(metrics["tta#0.5"])
+            self.auc_train.append(metrics["auc#0.1"])
             plt.plot(self.epochs, self.fpr_train, label="fpr#0.5 (train)", marker="+", color="red")
             plt.plot(self.epochs, self.tta_train, label="tta#0.5 (train)", marker="+", color="blue")
-        if "\nfpr@0.5" in metrics and "tta@0.5" in metrics:
+            plt.plot(self.epochs, self.auc_train, label="auc#0.1 (train)", marker="+", color="green")
+        if "\nfpr@0.5" in metrics and "tta@0.5" in metrics and "auc@0.1" in metrics:
             self.fpr_val.append(metrics["\nfpr@0.5"])
             self.tta_val.append(metrics["tta@0.5"])
+            self.auc_val.append(metrics["auc@0.1"])
             plt.plot(self.epochs, self.fpr_val, label="fpr@0.5 (val)", marker="o", color="red")
             plt.plot(self.epochs, self.tta_val, label="tta@0.5 (val)", marker="o", color="blue")
+            plt.plot(self.epochs, self.auc_val, label="auc@0.1 (val)", marker="o", color="green")
         plt.title("Anticipation Metrics")
         plt.xlabel("Epochs")
         plt.legend()
@@ -229,26 +235,26 @@ class NewAnticipationMetricHook(Hook):
 
         plt.figure()
         if "mAP#" in metrics:
+            self.AP0_train.append(metrics["AP#0.0s"])
             self.AP5_train.append(metrics["AP#0.5s"])
             self.AP10_train.append(metrics["AP#1.0s"])
             self.AP15_train.append(metrics["AP#1.5s"])
-            self.AP20_train.append(metrics["AP#2.0s"])
             self.mAP_train.append(metrics["mAP#"])
+            plt.plot(self.epochs, self.AP0_train, label="AP#0.0s (train)", marker="+", color="purple")
             plt.plot(self.epochs, self.AP5_train, label="AP#0.5s (train)", marker="+", color="blue")
             plt.plot(self.epochs, self.AP10_train, label="AP#1.0s (train)", marker="+", color="red")
             plt.plot(self.epochs, self.AP15_train, label="AP#1.5s (train)", marker="+", color="green")
-            plt.plot(self.epochs, self.AP20_train, label="AP#2.0s (train)", marker="+", color="purple")
             plt.plot(self.epochs, self.mAP_train, label="mAP# (train)", marker="+", color="orange")
         if "mAP@" in metrics:
+            self.AP0_val.append(metrics["AP@0.0s"])
             self.AP5_val.append(metrics["AP@0.5s"])
             self.AP10_val.append(metrics["AP@1.0s"])
             self.AP15_val.append(metrics["AP@1.5s"])
-            self.AP20_val.append(metrics["AP@2.0s"])
             self.mAP_val.append(metrics["mAP@"])
+            plt.plot(self.epochs, self.AP0_val, label="AP@0.0s (val)", marker="o", color="purple")
             plt.plot(self.epochs, self.AP5_val, label="AP@0.5s (val)", marker="o", color="blue")
             plt.plot(self.epochs, self.AP10_val, label="AP@1.0s (val)", marker="o", color="red")
             plt.plot(self.epochs, self.AP15_val, label="AP@1.5s (val)", marker="o", color="green")
-            plt.plot(self.epochs, self.AP20_val, label="AP@2.0s (val)", marker="o", color="purple")
             plt.plot(self.epochs, self.mAP_val, label="mAP@ (val)", marker="o", color="orange")
         i_v = self.mAP_val.index(max(self.mAP_val))
         plt.title(f"mAP_val@{i_v+1}={self.mAP_val[i_v]:.4f}")
