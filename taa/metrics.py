@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import os
 import copy
 from collections import OrderedDict
 from itertools import product
@@ -6,6 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import mmengine
 import numpy as np
+import pandas as pd
 import torch
 from mmengine.evaluator import BaseMetric
 
@@ -18,7 +20,7 @@ from mmaction.evaluation import (
 )
 from mmaction.registry import METRICS
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, average_precision_score
 from .utils import visualize_pred_score
 
 
@@ -243,4 +245,66 @@ class AnticipationMetric(DetectionMetric):
         eval_results[f"\n{sep}num_samples"] = len(labels)
         for index, t in enumerate(thresholds):
             eval_results[f"threshold{sep}b_{index}"] = t
+        return eval_results
+
+
+@METRICS.register_module()
+class NewAnticipationMetric(DetectionMetric):
+    def calculate(self, preds, labels, abnormal_start_inds, accident_inds, is_test) -> Dict:
+        """Compute the metrics from processed results.
+
+        Args:
+            preds (list[np.ndarray]): List of the prediction scores.
+            labels (list[int | np.ndarray]): List of the labels.
+
+        Returns:
+            dict: The computed metrics. The keys are the names of the metrics,
+            and the values are corresponding results.
+        """
+        eval_results = OrderedDict()
+        sep = "@" if is_test else "#"
+
+        if len(preds[0].shape) > 1:
+            preds = [np.max(pred, axis=-1) for pred in preds]
+
+        preds_before_abnormal = -np.sort(-np.concatenate([pred[:i] for pred, i in zip(preds, abnormal_start_inds)]))
+        eval_results[f"\nfpr{sep}0.5"] = sum(preds_before_abnormal >= 0.5) / len(preds_before_abnormal)
+
+        ttas = [
+            (i - np.argmax(pred[:i] >= 0.5)) / 10 if np.any(pred[:i] >= 0.5) else 0
+            for pred, i in zip(preds, accident_inds)
+        ]
+        eval_results[f"tta{sep}0.5"] = sum(ttas) / len(ttas)
+
+        tta_list = []
+        for t in preds_before_abnormal:
+            ttas = [
+                (i - np.argmax(pred[:i] >= t)) / 10 if np.any(pred[:i] >= t) else 0
+                for pred, i in zip(preds, accident_inds)
+            ]
+            tta_list.append(sum(ttas) / len(ttas))
+
+        data = dict(fpr=[(i + 1) / len(preds_before_abnormal) for i in range(len(preds_before_abnormal))], tta=tta_list)
+        df = pd.DataFrame(data)
+        os.makedirs("outputs", exist_ok=True)
+        df.to_csv(f"outputs/fpr_tta_{self.epoch}.csv", index=False)
+
+        preds_5 = [np.max(pred[i - 5 : i]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_10 = [np.max(pred[i - 10 : i - 5]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_15 = [np.max(pred[i - 15 : i - 10]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_20 = [np.max(pred[i - 20 : i - 15]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_n = [np.max(pred[:5]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        labels = [1] * len(preds_n) + [0] * len(preds_n)
+        eval_results[f"AP{sep}0.5s"] = average_precision_score(labels, preds_5 + preds_n)
+        eval_results[f"AP{sep}1.0s"] = average_precision_score(labels, preds_10 + preds_n)
+        eval_results[f"AP{sep}1.5s"] = average_precision_score(labels, preds_15 + preds_n)
+        eval_results[f"AP{sep}2.0s"] = average_precision_score(labels, preds_20 + preds_n)
+        eval_results[f"mAP{sep}"] = (
+            eval_results[f"AP{sep}0.5s"]
+            + eval_results[f"AP{sep}1.0s"]
+            + eval_results[f"AP{sep}1.5s"]
+            + eval_results[f"AP{sep}2.0s"]
+        ) / 4
+
+        eval_results[f"num_samples{sep}"] = len(preds)
         return eval_results

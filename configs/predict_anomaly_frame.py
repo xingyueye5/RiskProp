@@ -161,7 +161,7 @@ val_dataloader = dict(
 test_dataloader = val_dataloader
 
 val_evaluator = dict(
-    type="AnticipationMetric",
+    type="NewAnticipationMetric",
     thresholds=[x * 0.1 for x in range(1, 10)],
     vis_list=vis_list,
     output_dir="visualizations/outputs_test",
@@ -172,9 +172,9 @@ train_cfg = dict(type="EpochBasedTrainLoop", max_epochs=50, val_begin=1, val_int
 
 # 每轮都保存权重，并且只保留最新的权重
 default_hooks = dict(
-    checkpoint=dict(type="CheckpointHook", interval=1, max_keep_ckpts=1, save_best="a_tta@b_0", rule="greater")
+    checkpoint=dict(type="CheckpointHook", interval=1, max_keep_ckpts=50, save_best="mAP@", rule="greater")
 )
-custom_hooks = [dict(type="EpochHook"), dict(type="AnticipationMetricHook")]
+custom_hooks = [dict(type="EpochHook"), dict(type="NewAnticipationMetricHook")]
 
 model = dict(
     type="Recognizer2D",
