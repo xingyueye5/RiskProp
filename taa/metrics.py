@@ -291,7 +291,7 @@ class NewAnticipationMetric(DetectionMetric):
         preds_5 = [np.max(pred[i - 10 : i - 5]) for pred, i in zip(preds, accident_inds) if i >= 20]
         preds_10 = [np.max(pred[i - 15 : i - 10]) for pred, i in zip(preds, accident_inds) if i >= 20]
         preds_15 = [np.max(pred[i - 20 : i - 15]) for pred, i in zip(preds, accident_inds) if i >= 20]
-        preds_n = [np.max(pred[max(i - 50, 0) : max(i - 45, 5)]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_n = [np.max(pred[:5]) for pred, i in zip(preds, accident_inds) if i >= 20]
         labels = [1] * len(preds_n) + [0] * len(preds_n)
         eval_results[f"AUC{sep}0.0s"], fpr_0, tpr_0 = auc(np.array(labels), np.array(preds_0 + preds_n))
         eval_results[f"AUC{sep}0.5s"], fpr_5, tpr_5 = auc(np.array(labels), np.array(preds_5 + preds_n))
