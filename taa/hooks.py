@@ -191,38 +191,38 @@ class NewAnticipationMetricHook(Hook):
         self.epochs = []
         self.fpr_train = []
         self.tta_train = []
-        self.auc_train = []
-        self.AP0_train = []
-        self.AP5_train = []
-        self.AP10_train = []
-        self.AP15_train = []
-        self.mAP_train = []
+        self.mtta_train = []
+        self.AUC0_train = []
+        self.AUC5_train = []
+        self.AUC10_train = []
+        self.AUC15_train = []
+        self.mAUC_train = []
         self.fpr_val = []
         self.tta_val = []
-        self.auc_val = []
-        self.AP0_val = []
-        self.AP5_val = []
-        self.AP10_val = []
-        self.AP15_val = []
-        self.mAP_val = []
+        self.mtta_val = []
+        self.AUC0_val = []
+        self.AUC5_val = []
+        self.AUC10_val = []
+        self.AUC15_val = []
+        self.mAUC_val = []
 
     def after_val_epoch(self, runner, metrics) -> None:
         self.epochs.append(runner.epoch)
         plt.figure()
-        if "\nfpr#0.5" in metrics and "tta#0.5" in metrics and "auc#0.1" in metrics:
+        if "\nfpr#0.5" in metrics and "tta#0.5" in metrics and "mtta#0.1" in metrics:
             self.fpr_train.append(metrics["\nfpr#0.5"])
             self.tta_train.append(metrics["tta#0.5"])
-            self.auc_train.append(metrics["auc#0.1"])
+            self.mtta_train.append(metrics["mtta#0.1"])
             plt.plot(self.epochs, self.fpr_train, label="fpr#0.5 (train)", marker="+", color="red")
             plt.plot(self.epochs, self.tta_train, label="tta#0.5 (train)", marker="+", color="blue")
-            plt.plot(self.epochs, self.auc_train, label="auc#0.1 (train)", marker="+", color="green")
-        if "\nfpr@0.5" in metrics and "tta@0.5" in metrics and "auc@0.1" in metrics:
+            plt.plot(self.epochs, self.mtta_train, label="mtta#0.1 (train)", marker="+", color="green")
+        if "\nfpr@0.5" in metrics and "tta@0.5" in metrics and "mtta@0.1" in metrics:
             self.fpr_val.append(metrics["\nfpr@0.5"])
             self.tta_val.append(metrics["tta@0.5"])
-            self.auc_val.append(metrics["auc@0.1"])
+            self.mtta_val.append(metrics["mtta@0.1"])
             plt.plot(self.epochs, self.fpr_val, label="fpr@0.5 (val)", marker="o", color="red")
             plt.plot(self.epochs, self.tta_val, label="tta@0.5 (val)", marker="o", color="blue")
-            plt.plot(self.epochs, self.auc_val, label="auc@0.1 (val)", marker="o", color="green")
+            plt.plot(self.epochs, self.mtta_val, label="mtta@0.1 (val)", marker="o", color="green")
         plt.title("Anticipation Metrics")
         plt.xlabel("Epochs")
         plt.legend()
@@ -230,39 +230,39 @@ class NewAnticipationMetricHook(Hook):
         plt.ylim(-0.1, 1.1)
         plt.xticks(range(1, max(self.epochs) + 1, 1))
         plt.yticks([i * 0.1 for i in range(0, 11)])
-        plt.savefig(osp.join(runner.log_dir, "metrics_anticipation.png"))
+        plt.savefig(osp.join(runner.log_dir, "metrics_tta.png"))
         plt.close()
 
         plt.figure()
-        if "mAP#" in metrics:
-            self.AP0_train.append(metrics["AP#0.0s"])
-            self.AP5_train.append(metrics["AP#0.5s"])
-            self.AP10_train.append(metrics["AP#1.0s"])
-            self.AP15_train.append(metrics["AP#1.5s"])
-            self.mAP_train.append(metrics["mAP#"])
-            plt.plot(self.epochs, self.AP0_train, label="AP#0.0s (train)", marker="+", color="purple")
-            plt.plot(self.epochs, self.AP5_train, label="AP#0.5s (train)", marker="+", color="blue")
-            plt.plot(self.epochs, self.AP10_train, label="AP#1.0s (train)", marker="+", color="red")
-            plt.plot(self.epochs, self.AP15_train, label="AP#1.5s (train)", marker="+", color="green")
-            plt.plot(self.epochs, self.mAP_train, label="mAP# (train)", marker="+", color="orange")
-        if "mAP@" in metrics:
-            self.AP0_val.append(metrics["AP@0.0s"])
-            self.AP5_val.append(metrics["AP@0.5s"])
-            self.AP10_val.append(metrics["AP@1.0s"])
-            self.AP15_val.append(metrics["AP@1.5s"])
-            self.mAP_val.append(metrics["mAP@"])
-            plt.plot(self.epochs, self.AP0_val, label="AP@0.0s (val)", marker="o", color="purple")
-            plt.plot(self.epochs, self.AP5_val, label="AP@0.5s (val)", marker="o", color="blue")
-            plt.plot(self.epochs, self.AP10_val, label="AP@1.0s (val)", marker="o", color="red")
-            plt.plot(self.epochs, self.AP15_val, label="AP@1.5s (val)", marker="o", color="green")
-            plt.plot(self.epochs, self.mAP_val, label="mAP@ (val)", marker="o", color="orange")
-        i_v = self.mAP_val.index(max(self.mAP_val))
-        plt.title(f"mAP_val@{i_v+1}={self.mAP_val[i_v]:.4f}")
+        if "mAUC#" in metrics:
+            self.AUC0_train.append(metrics["AUC#0.0s"])
+            self.AUC5_train.append(metrics["AUC#0.5s"])
+            self.AUC10_train.append(metrics["AUC#1.0s"])
+            self.AUC15_train.append(metrics["AUC#1.5s"])
+            self.mAUC_train.append(metrics["mAUC#"])
+            plt.plot(self.epochs, self.AUC0_train, label="AUC#0.0s (train)", marker="+", color="purple")
+            plt.plot(self.epochs, self.AUC5_train, label="AUC#0.5s (train)", marker="+", color="blue")
+            plt.plot(self.epochs, self.AUC10_train, label="AUC#1.0s (train)", marker="+", color="red")
+            plt.plot(self.epochs, self.AUC15_train, label="AUC#1.5s (train)", marker="+", color="green")
+            plt.plot(self.epochs, self.mAUC_train, label="mAUC# (train)", marker="+", color="orange")
+        if "mAUC@" in metrics:
+            self.AUC0_val.append(metrics["AUC@0.0s"])
+            self.AUC5_val.append(metrics["AUC@0.5s"])
+            self.AUC10_val.append(metrics["AUC@1.0s"])
+            self.AUC15_val.append(metrics["AUC@1.5s"])
+            self.mAUC_val.append(metrics["mAUC@"])
+            plt.plot(self.epochs, self.AUC0_val, label="AUC@0.0s (val)", marker="o", color="purple")
+            plt.plot(self.epochs, self.AUC5_val, label="AUC@0.5s (val)", marker="o", color="blue")
+            plt.plot(self.epochs, self.AUC10_val, label="AUC@1.0s (val)", marker="o", color="red")
+            plt.plot(self.epochs, self.AUC15_val, label="AUC@1.5s (val)", marker="o", color="green")
+            plt.plot(self.epochs, self.mAUC_val, label="mAUC@ (val)", marker="o", color="orange")
+        i_v = self.mAUC_val.index(max(self.mAUC_val))
+        plt.title(f"mAUC_val@{i_v+1}={self.mAUC_val[i_v]:.4f}")
         plt.xlabel("Epochs")
         plt.legend()
         plt.xlim(0, max(self.epochs) + 1)
         plt.ylim(-0.1, 1.1)
         plt.xticks(range(1, max(self.epochs) + 1, 1))
         plt.yticks([i * 0.1 for i in range(0, 11)])
-        plt.savefig(osp.join(runner.log_dir, "metrics_AP.png"))
+        plt.savefig(osp.join(runner.log_dir, "metrics_AUC.png"))
         plt.close()

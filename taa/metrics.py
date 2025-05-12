@@ -263,12 +263,13 @@ class NewAnticipationMetric(DetectionMetric):
         """
         eval_results = OrderedDict()
         sep = "@" if is_test else "#"
+        os.makedirs("outputs", exist_ok=True)
 
         if len(preds[0].shape) > 1:
             preds = [np.max(pred, axis=-1) for pred in preds]
 
-        preds_before_abnormal = -np.sort(-np.concatenate([pred[:i] for pred, i in zip(preds, abnormal_start_inds)]))
-        eval_results[f"\nfpr{sep}0.5"] = sum(preds_before_abnormal >= 0.5) / len(preds_before_abnormal)
+        preds_n = -np.sort(-np.concatenate([pred[:i] for pred, i in zip(preds, abnormal_start_inds)]))
+        eval_results[f"\nfpr{sep}0.5"] = sum(preds_n >= 0.5) / len(preds_n)
 
         ttas = [
             (i - np.argmax(pred[:i] >= 0.5)) / 10 if np.any(pred[:i] >= 0.5) else 0
@@ -276,35 +277,73 @@ class NewAnticipationMetric(DetectionMetric):
         ]
         eval_results[f"tta{sep}0.5"] = sum(ttas) / len(ttas)
 
-        tta_list = []
-        for t in preds_before_abnormal:
-            ttas = [
-                (i - np.argmax(pred[:i] >= t)) / 10 if np.any(pred[:i] >= t) else 0
-                for pred, i in zip(preds, accident_inds)
-            ]
-            tta_list.append(sum(ttas) / len(ttas))
-        eval_results[f"auc{sep}0.1"] = sum(tta_list[: int(len(tta_list) * 0.1)]) / int(len(tta_list) * 0.1)
+        ttas = [
+            (i - np.argmax(pred[:i, None] >= preds_n, axis=0)) / 10 * np.any(pred[:i, None] >= preds_n, axis=0)
+            for pred, i in zip(preds, accident_inds)
+        ]
+        ttas = np.array(ttas).mean(axis=0)
+        eval_results[f"mtta{sep}0.1"] = ttas[: int(len(ttas) * 0.1)].mean()
 
-        df = pd.DataFrame(dict(fpr=[(i + 1) / len(tta_list) for i in range(len(tta_list))], tta=tta_list))
-        os.makedirs("outputs", exist_ok=True)
+        df = pd.DataFrame(dict(fpr=[(i + 1) / len(ttas) for i in range(len(ttas))], tta=ttas))
         df.to_csv(f"outputs/fpr_tta_{self.epoch}.csv", index=False)
 
         preds_0 = [np.max(pred[i - 5 : i]) for pred, i in zip(preds, accident_inds) if i >= 20]
         preds_5 = [np.max(pred[i - 10 : i - 5]) for pred, i in zip(preds, accident_inds) if i >= 20]
         preds_10 = [np.max(pred[i - 15 : i - 10]) for pred, i in zip(preds, accident_inds) if i >= 20]
         preds_15 = [np.max(pred[i - 20 : i - 15]) for pred, i in zip(preds, accident_inds) if i >= 20]
-        preds_n = [np.max(pred[:5]) for pred, i in zip(preds, accident_inds) if i >= 20]
+        preds_n = [np.max(pred[max(i - 50, 0) : max(i - 45, 5)]) for pred, i in zip(preds, accident_inds) if i >= 20]
         labels = [1] * len(preds_n) + [0] * len(preds_n)
-        eval_results[f"AP{sep}0.0s"] = average_precision_score(labels, preds_0 + preds_n)
-        eval_results[f"AP{sep}0.5s"] = average_precision_score(labels, preds_5 + preds_n)
-        eval_results[f"AP{sep}1.0s"] = average_precision_score(labels, preds_10 + preds_n)
-        eval_results[f"AP{sep}1.5s"] = average_precision_score(labels, preds_15 + preds_n)
-        eval_results[f"mAP{sep}"] = (
-            eval_results[f"AP{sep}0.0s"]
-            + eval_results[f"AP{sep}0.5s"]
-            + eval_results[f"AP{sep}1.0s"]
-            + eval_results[f"AP{sep}1.5s"]
-        ) / 4
+        eval_results[f"AUC{sep}0.0s"], fpr_0, tpr_0 = auc(np.array(labels), np.array(preds_0 + preds_n))
+        eval_results[f"AUC{sep}0.5s"], fpr_5, tpr_5 = auc(np.array(labels), np.array(preds_5 + preds_n))
+        eval_results[f"AUC{sep}1.0s"], fpr_10, tpr_10 = auc(np.array(labels), np.array(preds_10 + preds_n))
+        eval_results[f"AUC{sep}1.5s"], fpr_15, tpr_15 = auc(np.array(labels), np.array(preds_15 + preds_n))
+        eval_results[f"mAUC{sep}"] = (
+            eval_results[f"AUC{sep}0.5s"] + eval_results[f"AUC{sep}1.0s"] + eval_results[f"AUC{sep}1.5s"]
+        ) / 3
+
+        df = pd.DataFrame(dict(fpr=fpr_0, tpr=tpr_0))
+        df.to_csv(f"outputs/fpr_tpr_0_{self.epoch}.csv", index=False)
+        df = pd.DataFrame(dict(fpr=fpr_5, tpr=tpr_5))
+        df.to_csv(f"outputs/fpr_tpr_5_{self.epoch}.csv", index=False)
+        df = pd.DataFrame(dict(fpr=fpr_10, tpr=tpr_10))
+        df.to_csv(f"outputs/fpr_tpr_10_{self.epoch}.csv", index=False)
+        df = pd.DataFrame(dict(fpr=fpr_15, tpr=tpr_15))
+        df.to_csv(f"outputs/fpr_tpr_15_{self.epoch}.csv", index=False)
 
         eval_results[f"num_samples{sep}"] = len(preds)
         return eval_results
+
+
+def auc(y_true, y_scores, fpr_max=0.1):
+    # 1. 按预测得分降序排序，并记录真实标签
+    sorted_indices = np.argsort(y_scores)[::-1]  # 从高到低排序
+    y_true_sorted = y_true[sorted_indices]
+
+    # 2. 计算正负样本数量
+    P = np.sum(y_true == 1)  # 正样本数
+    N = np.sum(y_true == 0)  # 负样本数
+
+    # 3. 初始化TPR和FPR
+    TPR = [0]  # 真正例率（初始为0）
+    FPR = [0]  # 假正例率（初始为0）
+    TP, FP = 0, 0  # 累积真正例和假正例数
+
+    # 4. 遍历排序后的样本，动态更新TPR和FPR
+    for i in range(len(y_true_sorted)):
+        if y_true_sorted[i] == 1:
+            TP += 1  # 真正例+1
+        else:
+            FP += 1  # 假正例+1
+        TPR.append(TP / P)  # 计算当前TPR
+        FPR.append(FP / N)  # 计算当前FPR
+
+    # 5. 梯形法计算AUC（积分ROC曲线下面积）
+    auc = 0
+    for i in range(1, len(FPR)):
+        if FPR[i] > fpr_max:
+            break
+        dx = FPR[i] - FPR[i - 1]  # x轴宽度
+        dy = TPR[i] + TPR[i - 1]  # y轴平均高度
+        auc += dx * dy / 2  # 梯形面积累加
+
+    return auc / fpr_max, FPR, TPR
