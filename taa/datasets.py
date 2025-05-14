@@ -253,6 +253,10 @@ class DadaData(BaseActionDataset):
             if line[8] == -1:
                 continue
 
+            # skip the broken videos
+            if video_id in ["11_239"]:
+                continue
+
             # only for ego-car accidents
             if not 1 <= line[5] <= 18:
                 continue

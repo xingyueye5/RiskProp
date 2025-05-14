@@ -287,6 +287,22 @@ class NewAnticipationMetric(DetectionMetric):
         df = pd.DataFrame(dict(fpr=[(i + 1) / len(ttas) for i in range(len(ttas))], tta=ttas))
         df.to_csv(f"outputs/fpr_tta_{self.epoch}.csv", index=False)
 
+        ttas = [
+            (j - i - np.argmax(pred[i:j] >= 0.5)) / 10 if np.any(pred[i:j] >= 0.5) else 0
+            for pred, i, j in zip(preds, abnormal_start_inds, accident_inds)
+        ]
+        eval_results[f"tta_new{sep}0.5"] = sum(ttas) / len(ttas)
+
+        ttas = [
+            (j - i - np.argmax(pred[i:j, None] >= preds_n, axis=0)) / 10 * np.any(pred[i:j, None] >= preds_n, axis=0)
+            for pred, i, j in zip(preds, abnormal_start_inds, accident_inds)
+        ]
+        ttas = np.array(ttas).mean(axis=0)
+        eval_results[f"mtta_new{sep}0.1"] = ttas[: int(len(ttas) * 0.1)].mean()
+
+        df = pd.DataFrame(dict(fpr=[(i + 1) / len(ttas) for i in range(len(ttas))], tta=ttas))
+        df.to_csv(f"outputs/fpr_tta_new_{self.epoch}.csv", index=False)
+
         preds_0 = [np.max(pred[i - 5 : i]) for pred, i in zip(preds, accident_inds) if i >= 20]
         preds_5 = [np.max(pred[i - 10 : i - 5]) for pred, i in zip(preds, accident_inds) if i >= 20]
         preds_10 = [np.max(pred[i - 15 : i - 10]) for pred, i in zip(preds, accident_inds) if i >= 20]
