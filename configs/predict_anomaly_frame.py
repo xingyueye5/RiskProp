@@ -109,7 +109,7 @@ algorithm_keys = (
 file_client_args = dict(io_backend="disk")
 
 train_pipeline = [
-    dict(type="RandomSampleFrames", clip_len=50, num_clips=1, test_mode=False),
+    dict(type="SampleSnippetsBeforeAccident", snippet_len=5, num_snippets=10, test_mode=False),
     dict(type="RawFrameDecode", **file_client_args),
     dict(type="RandomResizedCrop", area_range=(0.8, 1.0), aspect_ratio_range=(4 / 3, 16 / 9)),
     dict(type="Resize", scale=(224, 224), keep_ratio=False),
@@ -119,7 +119,7 @@ train_pipeline = [
     # dict(type="VisualizeInputsAsVideos", output_dir="visualizations/inputs_train"),
 ]
 val_pipeline = [
-    dict(type="RandomSampleFrames", clip_len=None, num_clips=1, test_mode=True),
+    dict(type="SampleSnippetsBeforeAccident", snippet_len=5, num_snippets=None, test_mode=True),
     dict(type="RawFrameDecode", **file_client_args),
     dict(type="Resize", scale=(224, 224), keep_ratio=False),
     # dict(type="CenterCrop", crop_size=224),

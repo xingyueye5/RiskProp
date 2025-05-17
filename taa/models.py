@@ -90,7 +90,7 @@ class AnomalyHeadFromFrames(BaseHead):
         # [N * num_segs, in_channels, 1, 1]
         x = x.squeeze()
         # [N * num_segs, in_channels]
-        x = x.reshape(-1, num_segs, self.in_channels)
+        x = x.reshape(-1, 5, self.in_channels)
         # [N, num_segs, in_channels]
         x, _ = self.rnn(x)
         # [N, num_segs, rnn_hidden_size]
@@ -143,7 +143,9 @@ class AnomalyHeadFromFrames(BaseHead):
                 by :obj:`ActionDataSample`.
         """
         assert len(data_samples) == 1, "Test batch size must be 1!"
+        cls_scores = cls_scores.reshape(-1, data_samples[0].clip_len)[:, -1]
         data_samples[0].set_pred_score(F.sigmoid(cls_scores))
+        data_samples[0].frame_inds = data_samples[0].frame_inds.reshape(-1, data_samples[0].clip_len)[:, -1]
         return data_samples
 
 
