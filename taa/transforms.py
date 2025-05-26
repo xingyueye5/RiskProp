@@ -1,131 +1,9 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Optional
+import cv2
 import numpy as np
-import os.path as osp
 from mmcv.transforms import BaseTransform
 
 from mmaction.registry import TRANSFORMS
-
-from .utils import visualize_tensor_as_videos
-
-
-@TRANSFORMS.register_module()
-class TrimPosNegSegment(BaseTransform):
-    """Trim positive and negative segments from the video.
-
-    Args:
-        clip_len (int): The length of the clip.
-        p_pos (float): The probability of trimming a positive segment.
-            Defaults to 0.5.
-    """
-
-    def __init__(self, clip_len: int, p_pos: float = 0.5) -> None:
-        self.clip_len = clip_len
-        self.p_pos = p_pos
-
-    def transform(self, results: dict) -> dict:
-        if np.random.rand() < self.p_pos:
-            results["label"] = 1
-            results["start_index"] = max(results["accident_frame"] - self.clip_len + 1, 1)
-            results["total_frames"] = min(
-                2 * self.clip_len - 1 - 3, results["total_frames"] - results["start_index"] + 1
-            )
-        else:
-            results["label"] = 0
-            results["total_frames"] = results["abnormal_start_frame"] - 1
-        return results
-
-
-@TRANSFORMS.register_module()
-class RandomSampleFrames(BaseTransform):
-    """Sample frames from the video.
-
-    Required Keys:
-
-        - total_frames
-        - start_index
-
-    Added Keys:
-
-        - frame_inds
-        - frame_interval
-        - num_clips
-
-    Args:
-        clip_len (int): Frames of each sampled output clip.
-        num_clips (int): Number of clips to be sampled. Default: 1.
-        out_of_bound_opt (str): The way to deal with out of bounds frame
-            indexes. Available options are 'loop', 'repeat_last'.
-            Defaults to 'loop'.
-        test_mode (bool): Store True when building test or validation dataset.
-            Defaults to False.
-    """
-
-    def __init__(
-        self,
-        clip_len: Optional[int] = None,
-        num_clips: int = 1,
-        out_of_bound_opt: str = "loop",
-        test_mode: bool = False,
-        **kwargs
-    ) -> None:
-        self.clip_len = clip_len
-        self.num_clips = num_clips
-        self.out_of_bound_opt = out_of_bound_opt
-        self.test_mode = test_mode
-        assert self.out_of_bound_opt in ["loop", "repeat_last"]
-
-    def transform(self, results: dict) -> dict:
-        """Perform the CustomSampleFrames loading.
-
-        Args:
-            results (dict): The resulting dict to be modified and passed
-                to the next transform in pipeline.
-        """
-        total_frames = results["total_frames"]
-        assert results["fps"] in [30, 20, 10]
-        frame_interval = results["fps"] // 10
-
-        if self.test_mode:
-            # use full video
-            assert self.clip_len is None
-            assert self.num_clips == 1
-            clip_offsets = np.array([0])
-            clip_inds = np.arange(0, total_frames, step=frame_interval)
-        else:
-            if isinstance(self.clip_len, int):
-                assert self.clip_len >= 1
-                clip_offset_max = total_frames - (self.clip_len - 1) * frame_interval
-                clip_offset_max = max(clip_offset_max, 1)
-                assert clip_offset_max > 0
-                clip_offsets = np.random.randint(0, clip_offset_max, size=self.num_clips)
-                clip_inds = np.arange(self.clip_len) * frame_interval
-            else:
-                raise ValueError("Illegal clip_len option.")
-
-        frame_inds = np.concatenate(clip_offsets[:, None] + clip_inds[None, :])
-        if self.out_of_bound_opt == "loop":
-            frame_inds = np.mod(frame_inds, total_frames)
-        elif self.out_of_bound_opt == "repeat_last":
-            safe_inds = frame_inds < total_frames
-            unsafe_inds = 1 - safe_inds
-            last_ind = np.max(safe_inds * frame_inds, axis=1)
-            new_inds = safe_inds * frame_inds + (unsafe_inds.T * last_ind).T
-            frame_inds = new_inds
-        else:
-            raise ValueError("Illegal out_of_bound option.")
-
-        frame_inds = frame_inds + results["start_index"]
-        accident_frame = results["accident_frame"]
-
-        frame_labels = (frame_inds >= accident_frame) & (frame_inds < accident_frame + frame_interval)
-
-        results["frame_inds"] = frame_inds.astype(np.int32)
-        results["label"] = frame_labels
-        results["clip_len"] = len(frame_inds)
-        results["frame_interval"] = frame_interval
-        results["num_clips"] = self.num_clips
-        return results
 
 
 @TRANSFORMS.register_module()
@@ -150,11 +28,10 @@ class SampleFramesBeforeAccident(BaseTransform):
             Defaults to False.
     """
 
-    def __init__(self, clip_len: Optional[int] = None, num_clips: int = 1, test_mode: bool = False, **kwargs) -> None:
+    def __init__(self, clip_len: int = 1, num_clips: int = 50, test_mode: bool = False, **kwargs) -> None:
         self.clip_len = clip_len
         self.num_clips = num_clips
         self.test_mode = test_mode
-        self.observed_len = 10
 
     def transform(self, results: dict) -> dict:
         """Perform the SampleFramesBeforeAccident loading.
@@ -167,135 +44,87 @@ class SampleFramesBeforeAccident(BaseTransform):
         assert results["fps"] in [30, 20, 10]
         frame_interval = results["fps"] // 10
 
+        abnormal_start_frame = results["abnormal_start_frame"]
         accident_frame = results["accident_frame"]
         start_index = results["start_index"]
 
-        if self.test_mode:
-            # sample all frames
-            assert self.clip_len is None
-            assert self.num_clips == 1
-            clip_inds = np.arange(total_frames, step=frame_interval)
-            clip_offsets = np.full(self.num_clips, start_index)
-        else:
-            assert isinstance(self.clip_len, int)
-            assert self.clip_len >= 1
-            clip_inds = np.arange(self.clip_len) * frame_interval
-            if np.random.rand() < 0.5:
-                clip_offsets = np.full(
-                    self.num_clips,
-                    min(accident_frame + (self.observed_len - 1) * frame_interval, total_frames - 1 + start_index)
-                    - clip_inds[-1],
-                )
-            else:
-                clip_offsets = np.full(self.num_clips, min(start_index, total_frames - 1 + start_index - clip_inds[-1]))
+        clip_inds = np.concatenate(np.arange(self.num_clips)[:, None] + np.arange(self.clip_len)[None, :])
+        clip_inds *= frame_interval
+        clip_inds_max = clip_inds[-1]
 
-        frame_inds = np.concatenate(clip_offsets[:, None] + clip_inds[None, :])
-        frame_inds = np.maximum(frame_inds, start_index)
-        frame_labels = (frame_inds == accident_frame).astype(int)
+        if self.test_mode:
+            if results["target"] is True:
+                clip_inds += accident_frame - start_index - clip_inds_max
+            elif results["target"] is False:
+                if abnormal_start_frame is None:
+                    if total_frames > clip_inds_max:
+                        clip_inds += 0
+                    else:
+                        clip_inds += total_frames - 1 - clip_inds_max
+                else:
+                    if abnormal_start_frame - start_index > clip_inds_max:
+                        clip_inds += 0
+                    else:
+                        clip_inds += abnormal_start_frame - start_index - 1 - clip_inds_max
+            elif results["target"] is None:
+                clip_inds += total_frames - 1 - clip_inds_max
+        else:
+            if results["target"] is True:
+                accident_ind = accident_frame - start_index + np.random.randint(0, frame_interval)
+                clip_inds += min(accident_ind, total_frames - 1) - clip_inds_max
+            elif results["target"] is False:
+                if abnormal_start_frame is None:
+                    if total_frames > clip_inds_max:
+                        clip_inds += np.random.randint(0, total_frames - clip_inds_max)
+                    else:
+                        clip_inds += total_frames - 1 - clip_inds_max
+                else:
+                    if abnormal_start_frame - start_index > clip_inds_max:
+                        clip_inds += np.random.randint(0, abnormal_start_frame - start_index - clip_inds_max)
+                    else:
+                        clip_inds += abnormal_start_frame - start_index - 1 - clip_inds_max
+
+        frame_inds = np.maximum(clip_inds, 0) + start_index
 
         results["frame_inds"] = frame_inds.astype(np.int32)
-        results["label"] = frame_labels
-        results["clip_len"] = len(clip_inds)
         results["frame_interval"] = frame_interval
+        results["clip_len"] = self.clip_len
         results["num_clips"] = self.num_clips
         return results
 
 
 @TRANSFORMS.register_module()
-class SampleSnippetsBeforeAccident(BaseTransform):
-    """Sample snippets from the video.
-
-    Required Keys:
-
-        - total_frames
-        - start_index
-
-    Added Keys:
-
-        - frame_inds
-        - frame_interval
-        - num_clips
-
-    Args:
-        snippet_len (int): Frames of each sampled output snippet.
-        num_snippets (int): Number of snippets to be sampled. Default: 1.
-        test_mode (bool): Store True when building test or validation dataset.
-            Defaults to False.
-    """
-
-    def __init__(
-        self, snippet_len: int = 5, num_snippets: Optional[int] = None, test_mode: bool = False, **kwargs
-    ) -> None:
-        self.snippet_len = snippet_len
-        self.num_snippets = num_snippets
-        self.test_mode = test_mode
+class Flow(BaseTransform):
+    def __init__(self, modality: str = "rgb") -> None:
+        self.modality = modality
+        assert self.modality in ["rgb", "flow"]
 
     def transform(self, results: dict) -> dict:
-        """Perform the SampleSnippetsBeforeAccident loading.
-
-        Args:
-            results (dict): The resulting dict to be modified and passed
-                to the next transform in pipeline.
-        """
-        total_frames = results["total_frames"]
-        assert results["fps"] in [30, 20, 10]
-        frame_interval = results["fps"] // 10
-
-        accident_frame = results["accident_frame"]
-        start_index = results["start_index"]
-        accident_ind = accident_frame - start_index
-
-        snippet_inds = np.arange(self.snippet_len) * frame_interval
-        snippet_offset_max = total_frames - (self.snippet_len - 1) * frame_interval
-        assert snippet_offset_max > 0
-
-        if self.test_mode:
-            # dense sample from the full video
-            assert self.num_snippets is None
-            num_snippets_max = int(1000 / self.snippet_len)
-            if snippet_offset_max <= frame_interval * num_snippets_max:
-                snippet_offsets = np.arange(0, snippet_offset_max, step=frame_interval)
-            else:
-                # Prevent CUDA out of memory
-                snippet_offsets = np.arange(
-                    max(accident_ind - frame_interval * (num_snippets_max - 10), 0),
-                    min(accident_ind + frame_interval * 10, snippet_offset_max),
-                    step=frame_interval,
-                )
-        else:
-            assert isinstance(self.num_snippets, int)
-            assert self.num_snippets >= 1
-            snippet_offsets = np.random.randint(0, min(accident_ind + 1, snippet_offset_max), size=self.num_snippets)
-
-        snippet_labels = (snippet_offsets + (self.snippet_len - 1) * frame_interval >= accident_ind) & (
-            snippet_offsets + (self.snippet_len - 1) * frame_interval < accident_ind + frame_interval
-        )
-
-        frame_inds = np.concatenate(snippet_offsets[:, None] + snippet_inds[None, :])
-        frame_inds = np.minimum(frame_inds, total_frames - 1) + start_index
-        results["frame_inds"] = frame_inds.astype(np.int32)
-        results["label"] = snippet_labels
-        results["clip_len"] = self.snippet_len
-        results["frame_interval"] = frame_interval
-        results["num_clips"] = len(snippet_offsets)
+        if self.modality == "flow":
+            imgs = []
+            for i in range(results["num_clips"]):
+                frames = results["imgs"][i * results["clip_len"] : (i + 1) * results["clip_len"]]
+                if results["clip_len"] == 1:
+                    prev_frame = results["imgs"][max(i - 1, 0)]
+                    flows = calculate_optical_flow(frames, prev_frame)
+                else:
+                    flows = calculate_optical_flow(frames)
+                imgs += flows
+            results["imgs"] = imgs
         return results
 
 
-@TRANSFORMS.register_module()
-class VisualizeInputsAsVideos(BaseTransform):
-    """Visualize inputs as videos and save them to the specified directory.
+def calculate_optical_flow(frames, prev_frame=None):
+    """Calculate dense optical flow between consecutive frames"""
+    flows = []
+    if prev_frame is None:
+        prev_frame = frames[0]
+    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2GRAY)
 
-    Args:
-        output_dir (str): The directory to save the videos.
-    """
+    for frame in frames:
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        flow = cv2.calcOpticalFlowFarneback(prev_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        flows.append(np.dstack([flow, np.linalg.norm(flow, axis=2)]))
+        prev_gray = gray
 
-    def __init__(self, output_dir: str) -> None:
-        self.output_dir = output_dir
-
-    def transform(self, results: dict) -> dict:
-        inputs = results["inputs"]
-        data_samples = results["data_samples"]
-        type = data_samples.type
-        video_id = data_samples.video_id
-        visualize_tensor_as_videos(inputs, osp.join(self.output_dir, str(type), video_id))
-        return results
+    return flows

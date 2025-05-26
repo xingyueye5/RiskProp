@@ -7,201 +7,99 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
 
-from mmaction.evaluation import top_k_accuracy
 from mmaction.registry import MODELS
-from mmaction.utils import ConfigType, SampleList, get_str_type
+from mmaction.utils import ConfigType, SampleList
 from mmaction.models import BaseHead
-from mmaction.models.heads.base import AvgConsensus
 
 from .models_transformer import TransformerDecoder, TransformerDecoderLayer
 
 
 @MODELS.register_module()
-class AnomalyHeadFromFrames(BaseHead):
-    """Predict anomaly score from frames.
-
-    Args:
-        num_classes (int): Number of classes to be classified.
-        in_channels (int): Number of channels in input feature.
-        loss_cls (dict or ConfigDict): Config for building loss.
-            Default: dict(type='CrossEntropyLoss').
-        dropout_ratio (float): Probability of dropout layer. Default: 0.4.
-        init_std (float): Std value for Initiation. Default: 0.01.
-        kwargs (dict, optional): Any keyword argument to be used to initialize
-            the head.
-    """
-
+class AnticipationHead(BaseHead):
     def __init__(
         self,
-        num_classes: int,
+        num_classes: int = 1,
         in_channels: int = 2048,
-        loss_cls: ConfigType = dict(type="CrossEntropyLoss"),
+        loss_cls: ConfigType = dict(type="BCELossWithLogits"),
         pos_weight: float = 1,
-        dropout_ratio: float = 0.4,
+        dropout: float = 0.4,
         init_std: float = 0.01,
-        rnn_hidden_size: int = 512,
+        num_clips: int = 50,
+        with_rnn: bool = False,
         rnn_num_layers: int = 1,
         rnn_bidirectional: bool = False,
-        rnn_dropout_ratio: float = 0.5,
+        rnn_dropout: float = 0.5,
+        with_decoder: bool = False,
+        num_heads: int = 8,
+        num_decoder_layers: int = 2,
+        dim_feedforward: int = 2048,
+        decoder_dropout: float = 0.1,
+        activation: str = "relu",
+        anticipate_len: int = 20,
+        label_with: str = "fix",
         **kwargs,
     ) -> None:
         super().__init__(num_classes, in_channels, loss_cls=loss_cls, **kwargs)
 
-        self.dropout_ratio = dropout_ratio
-        self.init_std = init_std
-        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.dropout = nn.Dropout(p=self.dropout_ratio)
-
-        self.rnn_hidden_size = rnn_hidden_size
-        self.rnn_num_layers = rnn_num_layers
-        self.rnn_bidirectional = rnn_bidirectional
-        self.rnn_dropout_ratio = rnn_dropout_ratio
-        self.rnn = nn.LSTM(
-            input_size=self.in_channels,
-            hidden_size=self.rnn_hidden_size,
-            num_layers=self.rnn_num_layers,
-            bidirectional=self.rnn_bidirectional,
-            dropout=self.rnn_dropout_ratio if self.rnn_num_layers > 1 else 0,
-            batch_first=True,
-        )
-        self.fc_cls = nn.Linear(self.rnn_hidden_size, self.num_classes)
+        self.avg_pool2d = nn.AdaptiveAvgPool2d(1)
+        self.avg_pool3d = nn.AdaptiveAvgPool3d(1)
+        self.dropout = nn.Dropout(p=dropout)
         self.pos_weight = torch.tensor(pos_weight)
+        self.init_std = init_std
+        self.num_clips = num_clips
+        self.with_rnn = with_rnn
+        self.with_decoder = with_decoder
+        self.anticipate_len = anticipate_len
+        self.label_with = label_with
+        assert label_with in ["fix", "annotation", "constraint"]
 
-    def init_weights(self) -> None:
-        """Initiate the parameters from scratch."""
-        normal_init(self.fc_cls, std=self.init_std)
-
-    def forward(self, x: Tensor, num_segs: int, **kwargs) -> Tensor:
-        """Defines the computation performed at every call.
-
-        Args:
-            x (Tensor): The input data.
-            num_segs (int): Number of segments into which a video
-                is divided.
-        Returns:
-            Tensor: The classification scores for input samples.
-        """
-        # Notice that num_segs = num_clips * clip_len!!!
-        # In TSN, num_clips = 3, clip_len = 1, so num_segs = num_clips = 3
-        # [N * num_segs, in_channels, 7, 7]
-        x = self.avg_pool(x)
-        # [N * num_segs, in_channels, 1, 1]
-        x = x.squeeze()
-        # [N * num_segs, in_channels]
-        x = x.reshape(-1, 5, self.in_channels)
-        # [N, num_segs, in_channels]
-        x, _ = self.rnn(x)
-        # [N, num_segs, rnn_hidden_size]
-        x = x.reshape(-1, self.rnn_hidden_size)
-        # [N * num_segs, rnn_hidden_size]
-        x = self.dropout(x)
-        # [N * num_segs, rnn_hidden_size]
-        cls_score = self.fc_cls(x)
-        # [N * num_segs, num_classes]
-        return cls_score.squeeze()
-
-    def loss_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> Dict:
-        """Calculate the loss based on the features extracted by the head.
-
-        Args:
-            cls_scores (torch.Tensor): Classification prediction results of
-                all class, has shape (batch_size, num_classes).
-            data_samples (list[:obj:`ActionDataSample`]): The batch
-                data samples.
-
-        Returns:
-            dict: A dictionary of loss components.
-        """
-
-        labels = []
-        for data_sample in data_samples:
-            label = (data_sample.frame_inds >= data_sample.abnormal_start_frame) & (
-                data_sample.frame_inds < data_sample.accident_frame + data_sample.frame_interval
+        if self.with_rnn:
+            self.rnn = nn.LSTM(
+                input_size=self.in_channels,
+                hidden_size=self.in_channels,
+                num_layers=rnn_num_layers,
+                bidirectional=rnn_bidirectional,
+                dropout=rnn_dropout if rnn_num_layers > 1 else 0,
+                batch_first=True,
             )
-            labels.append(torch.from_numpy(label))
-        labels = torch.concatenate(labels).float().to(cls_scores.device)
+        if self.with_decoder:
+            self.decoder = TransformerDecoder(
+                TransformerDecoderLayer(
+                    d_model=self.in_channels,
+                    nhead=num_heads,
+                    dim_feedforward=dim_feedforward,
+                    dropout=decoder_dropout,
+                    activation=activation,
+                    batch_first=True,
+                ),
+                num_layers=num_decoder_layers,
+            )
+            self.pos = PositionalEncoding(d_model=self.in_channels)
 
-        loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
-
-        return dict(loss_cls=loss_cls)
-
-    def predict_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> SampleList:
-        """Transform a batch of output features extracted from the head into
-        prediction results.
-
-        Args:
-            cls_scores (torch.Tensor): Classification scores, has a shape
-                (B*num_segs, num_classes)
-            data_samples (list[:obj:`ActionDataSample`]): The
-                annotation data of every samples. It usually includes
-                information such as `gt_label`.
-
-        Returns:
-            List[:obj:`ActionDataSample`]: Recognition results wrapped
-                by :obj:`ActionDataSample`.
-        """
-        assert len(data_samples) == 1, "Test batch size must be 1!"
-        cls_scores = cls_scores.reshape(-1, data_samples[0].clip_len)[:, -1]
-        data_samples[0].set_pred_score(F.sigmoid(cls_scores))
-        data_samples[0].frame_inds = data_samples[0].frame_inds.reshape(-1, data_samples[0].clip_len)[:, -1]
-        return data_samples
-
-
-@MODELS.register_module()
-class AnomalyHeadFromSnippets(BaseHead):
-    """Predict anomaly score from snippets.
-
-    Args:
-        num_classes (int): Number of classes to be classified.
-        in_channels (int): Number of channels in input feature.
-        loss_cls (dict or ConfigDict): Config for building loss.
-            Default: dict(type='CrossEntropyLoss').
-        dropout_ratio (float): Probability of dropout layer. Default: 0.4.
-        init_std (float): Std value for Initiation. Default: 0.01.
-        kwargs (dict, optional): Any keyword argument to be used to initialize
-            the head.
-    """
-
-    def __init__(
-        self,
-        num_classes: int,
-        in_channels: int = 2048,
-        loss_cls: ConfigType = dict(type="CrossEntropyLoss"),
-        pos_weight: float = 1,
-        dropout_ratio: float = 0.4,
-        init_std: float = 0.01,
-        **kwargs,
-    ) -> None:
-        super().__init__(num_classes, in_channels, loss_cls=loss_cls, **kwargs)
-
-        self.dropout_ratio = dropout_ratio
-        self.init_std = init_std
-        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.dropout = nn.Dropout(p=self.dropout_ratio)
         self.fc_cls = nn.Linear(self.in_channels, self.num_classes)
-        self.pos_weight = torch.tensor(pos_weight)
 
     def init_weights(self) -> None:
-        """Initiate the parameters from scratch."""
         normal_init(self.fc_cls, std=self.init_std)
 
     def forward(self, x, **kwargs) -> None:
-        """Defines the computation performed at every call.
-
-        Args:
-            x (Tensor): The input data.
-
-        Returns:
-            Tensor: The classification scores for input samples.
-        """
         # [N, C, T, H, W]
-        x = x[:, :, -1, :, :]
-        # [N, C, H, W]
-        x = self.avg_pool(x)
-        # [N, C, 1, 1]
-        x = x.squeeze()
+        if x.dim() == 4:
+            x = self.avg_pool2d(x).squeeze(-1).squeeze(-1)
+        elif x.dim() == 5:
+            x = self.avg_pool3d(x).squeeze(-1).squeeze(-1).squeeze(-1)
+        # [N, C]
+        if self.with_rnn:
+            x = x.reshape(-1, self.num_clips, self.in_channels)
+            x, _ = self.rnn(x)
+            x = x.reshape(-1, self.in_channels)
+        # [N, C]
+        if self.with_decoder:
+            x = x.unsqueeze(1)
+            tgt_pos = self.pos()[:, : self.anticipate_len, :]
+            tgt = torch.zeros_like(tgt_pos).expand(x.shape[0], -1, -1)
+            x = self.decoder(tgt, x, tgt_pos=tgt_pos, memory_pos=torch.zeros_like(x))
+            # [N, anticipate_len, C]
         # [N, C]
         x = self.dropout(x)
         # [N, C]
@@ -210,297 +108,62 @@ class AnomalyHeadFromSnippets(BaseHead):
         return cls_score.squeeze()
 
     def loss_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> Dict:
-        """Calculate the loss based on the features extracted by the head.
+        if self.label_with == "constraint":
+            cls_scores = cls_scores.reshape(len(data_samples), -1)
+            preds, labels = [], []
+            for i, data_sample in enumerate(data_samples):
+                if data_sample.target:
+                    # preds.append(cls_scores[i, :5])
+                    preds.append(cls_scores[i, -1:])
+                    # labels.append(torch.zeros_like(cls_scores[i, :5]))
+                    labels.append(torch.ones_like(cls_scores[i, -1:]))
+                else:
+                    preds.append(cls_scores[i, :])
+                    labels.append(torch.zeros_like(cls_scores[i, :]))
+            preds, labels = torch.concatenate(preds), torch.concatenate(labels)
 
-        Args:
-            cls_scores (torch.Tensor): Classification prediction results of
-                all class, has shape (batch_size, num_classes).
-            data_samples (list[:obj:`ActionDataSample`]): The batch
-                data samples.
+            loss_cls = self.loss_cls(preds, labels, pos_weight=self.pos_weight)
+            # loss_mse = ((cls_scores[:, 1:].detach() - cls_scores[:, :-1]) ** 2).mean()
 
-        Returns:
-            dict: A dictionary of loss components.
-        """
+            loss_mse = self.loss_cls(cls_scores[:, :-1], torch.sigmoid(cls_scores[:, 1:].detach()))
 
-        labels = []
-        for data_sample in data_samples:
-            frame_inds = data_sample.frame_inds.reshape(-1, data_sample.clip_len)[:, -1]
-            label = (frame_inds >= data_sample.abnormal_start_frame) & (
-                frame_inds < data_sample.accident_frame + data_sample.frame_interval
-            )
-            labels.append(torch.from_numpy(label))
-        labels = torch.concatenate(labels).float().to(cls_scores.device)
+            return dict(loss_cls=loss_cls, loss_mse=loss_mse)
+        else:
+            labels = []
+            for data_sample in data_samples:
+                frame_inds = data_sample.frame_inds.reshape(-1, data_sample.clip_len)[:, -1]
+                if data_sample.target:
+                    if self.with_decoder:
+                        index = np.ceil((data_sample.accident_frame - frame_inds) / data_sample.frame_interval)
+                        label = np.eye(1000)[index.astype(int), : self.anticipate_len]
+                        if self.label_with == "annotation":
+                            label = label * (frame_inds >= data_sample.abnormal_start_frame)[:, None]
+                    else:
+                        if self.label_with == "fix":
+                            label = (frame_inds >= data_sample.accident_frame - data_sample.frame_interval * 20) & (
+                                frame_inds < data_sample.accident_frame + data_sample.frame_interval
+                            )
+                        elif self.label_with == "annotation":
+                            label = (frame_inds >= data_sample.abnormal_start_frame) & (
+                                frame_inds < data_sample.accident_frame + data_sample.frame_interval
+                            )
+                else:
+                    if self.with_decoder:
+                        label = np.zeros((len(frame_inds), self.anticipate_len))
+                    else:
+                        label = np.zeros_like(frame_inds)
+                labels.append(torch.from_numpy(label))
+            labels = torch.concatenate(labels).float().to(cls_scores.device)
 
-        loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
+            loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
 
-        return dict(loss_cls=loss_cls)
+            return dict(loss_cls=loss_cls)
 
     def predict_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> SampleList:
-        """Transform a batch of output features extracted from the head into
-        prediction results.
-
-        Args:
-            cls_scores (torch.Tensor): Classification scores, has a shape
-                (B*num_segs, num_classes)
-            data_samples (list[:obj:`ActionDataSample`]): The
-                annotation data of every samples. It usually includes
-                information such as `gt_label`.
-
-        Returns:
-            List[:obj:`ActionDataSample`]: Recognition results wrapped
-                by :obj:`ActionDataSample`.
-        """
-        assert len(data_samples) == 1, "Test batch size must be 1!"
-        data_samples[0].set_pred_score(F.sigmoid(cls_scores))
-        data_samples[0].frame_inds = data_samples[0].frame_inds.reshape(-1, data_samples[0].clip_len)[:, -1]
-        return data_samples
-
-
-@MODELS.register_module()
-class OccurrenceHeadFromFrames(BaseHead):
-    """The anticipation head for traffic accident.
-
-    Args:
-        num_classes (int): Number of classes to be classified.
-        in_channels (int): Number of channels in input feature.
-        loss_cls (dict or ConfigDict): Config for building loss.
-            Default: dict(type='CrossEntropyLoss').
-        dropout_ratio (float): Probability of dropout layer. Default: 0.4.
-        init_std (float): Std value for Initiation. Default: 0.01.
-        kwargs (dict, optional): Any keyword argument to be used to initialize
-            the head.
-    """
-
-    def __init__(
-        self,
-        num_classes: int,
-        in_channels: int = 2048,
-        loss_cls: ConfigType = dict(type="CrossEntropyLoss"),
-        pos_weight: float = 1,
-        dropout_ratio: float = 0.4,
-        init_std: float = 0.01,
-        num_heads: int = 8,
-        num_decoder_layers: int = 2,
-        dim_feedforward: int = 2048,
-        dropout: float = 0.1,
-        activation: str = "relu",
-        observed_len: int = 5,
-        anticipated_len: int = 25,
-        **kwargs,
-    ) -> None:
-        super().__init__(num_classes, in_channels, loss_cls=loss_cls, **kwargs)
-
-        self.dropout_ratio = dropout_ratio
-        self.init_std = init_std
-        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.dropout = nn.Dropout(p=self.dropout_ratio)
-        self.fc_cls = nn.Linear(self.in_channels, self.num_classes)
-        self.pos_weight = torch.tensor(pos_weight)
-
-        self.decoder = TransformerDecoder(
-            TransformerDecoderLayer(
-                d_model=in_channels,
-                nhead=num_heads,
-                dim_feedforward=dim_feedforward,
-                dropout=dropout,
-                activation=activation,
-                batch_first=True,
-            ),
-            num_layers=num_decoder_layers,
-        )
-        self.pos = PositionalEncoding(d_model=in_channels)
-        self.observed_len = observed_len
-        self.anticipated_len = anticipated_len
-
-    def init_weights(self) -> None:
-        """Initiate the parameters from scratch."""
-        normal_init(self.fc_cls, std=self.init_std)
-
-    def forward(self, x: Tensor, num_segs: int, **kwargs) -> Tensor:
-        """Defines the computation performed at every call.
-
-        Args:
-            x (Tensor): The input data.
-            num_segs (int): Number of segments into which a video
-                is divided.
-        Returns:
-            Tensor: The classification scores for input samples.
-        """
-        # Notice that num_segs = num_clips * clip_len!!!
-        # [N * num_segs, in_channels, 7, 7]
-        x = self.avg_pool(x)
-        # [N * num_segs, in_channels, 1, 1]
-        x = x.squeeze()
-        # [N * num_segs, in_channels]
-        x = x.reshape(-1, num_segs, self.in_channels)
-        # [N, num_segs, in_channels]
-        offsets = torch.arange(0, num_segs - self.observed_len + 1, device=x.device)  # [num_snippets]
-
-        inds_observed = torch.arange(0, self.observed_len, device=x.device)  # [observed_len]
-        inds_observed = (offsets[:, None] + inds_observed[None, :]).flatten()  # [num_snippets * observed_len]
-        x_observed = x[:, inds_observed, :].reshape(-1, self.observed_len, self.in_channels)
-        # [N * num_snippets, observed_len, in_channels]
-
-        inds_anticipated = torch.arange(0, self.anticipated_len, device=x.device)  # [anticipated_len]
-        inds_anticipated = (offsets[:, None] + inds_anticipated[None, :]).flatten()  # [num_snippets * anticipated_len]
-        mask_anticipated = inds_anticipated >= num_segs  # [num_snippets * anticipated_len]
-        inds_anticipated[mask_anticipated] = -1
-        x_anticipated = x[:, inds_anticipated, :].reshape(-1, self.anticipated_len, self.in_channels)
-        # [N * num_snippets, anticipated_len, in_channels]
-
-        tgt_pos = self.pos()[:, : self.anticipated_len, :]
-        memory_pos = self.pos()[:, : self.observed_len, :]
-        tgt = torch.zeros_like(tgt_pos).expand(x_observed.shape[0], -1, -1)
-        tgt = self.decoder(tgt, x_observed, tgt_pos=tgt_pos, memory_pos=memory_pos)
-        # [N * num_snippets, anticipated_len, in_channels]
-
-        tgt = tgt.reshape(-1, self.in_channels)  # [N * num_snippets * anticipated_len, in_channels]
-        x_anticipated = x_anticipated.reshape(-1, self.in_channels)  # [N * num_snippets * anticipated_len, in_channels]
-        mask_anticipated = mask_anticipated.repeat(x.shape[0])  # [N * num_snippets * anticipated_len]
-
-        output = tgt
-        output = self.dropout(output)
-        cls_scores = self.fc_cls(output).squeeze()
-        return tgt, x_anticipated, inds_anticipated, mask_anticipated, cls_scores
-
-    def loss_by_feat(self, feats, data_samples: SampleList) -> Dict:
-        """Calculate the loss based on the features extracted by the head.
-
-        Args:
-            cls_scores (torch.Tensor): Classification prediction results of
-                all class, has shape (batch_size, num_classes).
-            data_samples (list[:obj:`ActionDataSample`]): The batch
-                data samples.
-
-        Returns:
-            dict: A dictionary of loss components.
-        """
-        tgt, x, inds, mask, cls_scores = feats
-
-        labels = [data_sample.gt_label[inds].reshape(-1, self.anticipated_len) for data_sample in data_samples]
-        abnormal_lens = [
-            (data_sample.accident_frame - data_sample.abnormal_start_frame) // data_sample.frame_interval
-            for data_sample in data_samples
-        ]
-        for label, abnormal_len in zip(labels, abnormal_lens):
-            label[:, self.observed_len + abnormal_len :] = 0
-        labels = torch.concatenate(labels).flatten().float()
-
-        loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
-
-        return dict(loss_cls=loss_cls)
-
-    def predict_by_feat(self, feats, data_samples: SampleList) -> SampleList:
-        """Transform a batch of output features extracted from the head into
-        prediction results.
-
-        Args:
-            cls_scores (torch.Tensor): Classification scores, has a shape
-                (B*num_segs, num_classes)
-            data_samples (list[:obj:`ActionDataSample`]): The
-                annotation data of every samples. It usually includes
-                information such as `gt_label`.
-
-        Returns:
-            List[:obj:`ActionDataSample`]: Recognition results wrapped
-                by :obj:`ActionDataSample`.
-        """
-        assert len(data_samples) == 1, "Test batch size must be 1!"
-        _, _, _, _, cls_scores = feats
-        data_samples[0].set_pred_score(
-            F.sigmoid(cls_scores.reshape(-1, self.anticipated_len)[:, self.observed_len - 1 :])
-        )
-        data_samples[0].set_gt_label(data_samples[0].gt_label[self.observed_len - 1 :])
-        data_samples[0].frame_inds = data_samples[0].frame_inds[self.observed_len - 1 :]
-        return data_samples
-
-
-@MODELS.register_module()
-class OccurrenceHeadFromSnippets(OccurrenceHeadFromFrames):
-    def forward(self, x, **kwargs) -> None:
-        """Defines the computation performed at every call.
-
-        Args:
-            x (Tensor): The input data.
-
-        Returns:
-            Tensor: The classification scores for input samples.
-        """
-        N, C, T, H, W = x.shape
-        # [N, C, T, H, W]
-        x = x.permute(0, 2, 1, 3, 4)
-        # [N, T, C, H, W]
-        x = x.reshape(N * T, C, H, W)
-        # [N * T, C, H, W]
-        x = self.avg_pool(x)
-        # [N * T, C, 1, 1]
-        x = x.squeeze()
-        # [N * T, C]
-        x = x.reshape(N, T, C)
-        # [N, T, C]
-
-        assert self.observed_len == T
-        tgt_pos = self.pos()[:, : self.anticipated_len, :]
-        memory_pos = self.pos()[:, : self.observed_len, :]
-        tgt = torch.zeros_like(tgt_pos).expand(N, -1, -1)
-        tgt = self.decoder(tgt, x, tgt_pos=tgt_pos, memory_pos=memory_pos)
-        # [N, anticipated_len, C]
-
-        tgt = tgt.reshape(-1, self.in_channels)  # [N * anticipated_len, in_channels]
-
-        output = tgt
-        output = self.dropout(output)
-        cls_scores = self.fc_cls(output).squeeze()
-        return tgt, cls_scores
-
-    def loss_by_feat(self, feats, data_samples: SampleList) -> Dict:
-        """Calculate the loss based on the features extracted by the head.
-
-        Args:
-            cls_scores (torch.Tensor): Classification prediction results of
-                all class, has shape (batch_size, num_classes).
-            data_samples (list[:obj:`ActionDataSample`]): The batch
-                data samples.
-
-        Returns:
-            dict: A dictionary of loss components.
-        """
-        _, cls_scores = feats
-
-        labels = []
-        for data_sample in data_samples:
-            offsets = data_sample.frame_inds[:: data_sample.clip_len]
-            index = np.ceil((data_sample.accident_frame - offsets) / data_sample.frame_interval).astype(int)
-            label = np.eye(1000)[index, : self.anticipated_len]
-            label = label * (offsets >= data_sample.abnormal_start_frame)[:, None]
-            labels.append(torch.from_numpy(label))
-        labels = torch.concatenate(labels).flatten().float().to(cls_scores.device)
-
-        loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
-
-        return dict(loss_cls=loss_cls)
-
-    def predict_by_feat(self, feats, data_samples: SampleList) -> SampleList:
-        """Transform a batch of output features extracted from the head into
-        prediction results.
-
-        Args:
-            cls_scores (torch.Tensor): Classification scores, has a shape
-                (B*num_segs, num_classes)
-            data_samples (list[:obj:`ActionDataSample`]): The
-                annotation data of every samples. It usually includes
-                information such as `gt_label`.
-
-        Returns:
-            List[:obj:`ActionDataSample`]: Recognition results wrapped
-                by :obj:`ActionDataSample`.
-        """
-        assert len(data_samples) == 1, "Test batch size must be 1!"
-        _, cls_scores = feats
-        data_samples[0].set_pred_score(
-            F.sigmoid(cls_scores.reshape(-1, self.anticipated_len)[:, self.observed_len - 1 :])
-        )
-        data_samples[0].frame_inds = data_samples[0].frame_inds.reshape(-1, data_samples[0].clip_len)[:, -1]
+        cls_scores = cls_scores.reshape(len(data_samples), -1, *cls_scores.shape[1:])
+        for i, data_sample in enumerate(data_samples):
+            data_sample.set_pred_score(F.sigmoid(cls_scores[i]))
+            data_sample.frame_inds = data_sample.frame_inds.reshape(-1, data_sample.clip_len)[:, -1]
         return data_samples
 
 
