@@ -44,7 +44,6 @@ class SampleFramesBeforeAccident(BaseTransform):
         assert results["fps"] in [30, 20, 10]
         frame_interval = results["fps"] // 10
 
-        abnormal_start_frame = results["abnormal_start_frame"]
         accident_frame = results["accident_frame"]
         start_index = results["start_index"]
 
@@ -54,35 +53,41 @@ class SampleFramesBeforeAccident(BaseTransform):
 
         if self.test_mode:
             if results["target"] is True:
+                # The last frame of the clip is the accident frame
                 clip_inds += accident_frame - start_index - clip_inds_max
             elif results["target"] is False:
-                if abnormal_start_frame is None:
+                if accident_frame is None:
                     if total_frames > clip_inds_max:
+                        # The first frame of the clip is the first frame of the video
                         clip_inds += 0
                     else:
+                        # The last frame of the clip is the last frame of the video
                         clip_inds += total_frames - 1 - clip_inds_max
                 else:
-                    if abnormal_start_frame - start_index > clip_inds_max:
+                    if accident_frame - start_index - frame_interval * 30 > clip_inds_max:
+                        # The first frame of the clip is the first frame of the video
                         clip_inds += 0
                     else:
-                        clip_inds += abnormal_start_frame - start_index - 1 - clip_inds_max
+                        # The last frame of the clip is 3s before the accident frame
+                        clip_inds += accident_frame - start_index - frame_interval * 30 - clip_inds_max
             elif results["target"] is None:
+                # The last frame of the clip is the last frame of the video
                 clip_inds += total_frames - 1 - clip_inds_max
         else:
             if results["target"] is True:
                 accident_ind = accident_frame - start_index + np.random.randint(0, frame_interval)
                 clip_inds += min(accident_ind, total_frames - 1) - clip_inds_max
             elif results["target"] is False:
-                if abnormal_start_frame is None:
+                if accident_frame is None:
                     if total_frames > clip_inds_max:
                         clip_inds += np.random.randint(0, total_frames - clip_inds_max)
                     else:
                         clip_inds += total_frames - 1 - clip_inds_max
                 else:
-                    if abnormal_start_frame - start_index > clip_inds_max:
-                        clip_inds += np.random.randint(0, abnormal_start_frame - start_index - clip_inds_max)
+                    if accident_frame - start_index - frame_interval * 30 > clip_inds_max:
+                        clip_inds += np.random.randint(0, accident_frame - start_index - frame_interval * 30 - clip_inds_max)
                     else:
-                        clip_inds += abnormal_start_frame - start_index - 1 - clip_inds_max
+                        clip_inds += accident_frame - start_index - frame_interval * 30 - clip_inds_max
 
         frame_inds = np.maximum(clip_inds, 0) + start_index
 
@@ -97,10 +102,10 @@ class SampleFramesBeforeAccident(BaseTransform):
 class Flow(BaseTransform):
     def __init__(self, modality: str = "rgb") -> None:
         self.modality = modality
-        assert self.modality in ["rgb", "flow"]
+        assert self.modality in ["rgb", "flow", "both", "two_stream"], f"modality {self.modality} is not supported"
 
     def transform(self, results: dict) -> dict:
-        if self.modality == "flow":
+        if self.modality in ["flow", "both"] or self.modality == "two_stream" and results["flow"]:
             imgs = []
             for i in range(results["num_clips"]):
                 frames = results["imgs"][i * results["clip_len"] : (i + 1) * results["clip_len"]]
@@ -109,7 +114,10 @@ class Flow(BaseTransform):
                     flows = calculate_optical_flow(frames, prev_frame)
                 else:
                     flows = calculate_optical_flow(frames)
-                imgs += flows
+                if self.modality == "both":
+                    imgs += [np.concatenate([frame, flow], axis=-2) for frame, flow in zip(frames, flows)]
+                else:
+                    imgs += flows
             results["imgs"] = imgs
         return results
 

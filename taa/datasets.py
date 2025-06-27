@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import copy
 import os.path as osp
 
 from mmengine.fileio import exists
@@ -23,6 +24,7 @@ class MultiDataset(BaseDataset):
         nexar=None,
         pipeline_video=None,
         pipeline_frame=None,
+        modality="rgb",
         test_mode=False,
         train_with_val=False,
         val_train=False,
@@ -33,6 +35,8 @@ class MultiDataset(BaseDataset):
         self.d2city = d2city
         self.nexar = nexar
 
+        self.modality = modality
+        assert self.modality in ["rgb", "flow", "both", "two_stream"], f"modality {self.modality} is not supported"
         self.test_mode = test_mode
         self.train_with_val = train_with_val
         self.val_train = val_train
@@ -73,9 +77,6 @@ class MultiDataset(BaseDataset):
                 if not 1 <= line[5] <= 18:
                     continue
 
-                if line[7] - self.cap["start_index"] < fps * 0.5 or line[9] - self.cap["start_index"] < fps * 2:
-                    continue
-
                 # keep the train videos
                 if not self.test_mode and not self.train_with_val and video_id in cap_test.keys():
                     continue
@@ -100,43 +101,45 @@ class MultiDataset(BaseDataset):
                 if video_id in correct_total_frames.keys():
                     line[10] = correct_total_frames[video_id]
 
-                data_list.append(
-                    dict(
-                        dataset="cap",
-                        filename=None,
-                        frame_dir=frame_dir,
-                        filename_tmpl=self.cap["filename_tmpl"],
-                        start_index=self.cap["start_index"],
-                        video_id=video_id,
-                        type=line[5],
-                        target=True,
-                        abnormal_start_frame=line[7],
-                        accident_frame=line[9],
-                        total_frames=line[10],
-                        fps=fps,
-                        is_val=video_id in cap_test.keys(),
-                        is_test=False,
+                if line[9] - self.cap["start_index"] >= fps * 2:
+                    data_list.append(
+                        dict(
+                            dataset="cap",
+                            filename=None,
+                            frame_dir=frame_dir,
+                            filename_tmpl=self.cap["filename_tmpl"],
+                            start_index=self.cap["start_index"],
+                            video_id=video_id,
+                            type=line[5],
+                            target=True,
+                            abnormal_start_frame=line[7],
+                            accident_frame=line[9],
+                            total_frames=line[10],
+                            fps=fps,
+                            is_val=video_id in cap_test.keys(),
+                            is_test=False,
+                        )
                     )
-                )
 
-                data_list.append(
-                    dict(
-                        dataset="cap",
-                        filename=None,
-                        frame_dir=frame_dir,
-                        filename_tmpl=self.cap["filename_tmpl"],
-                        start_index=self.cap["start_index"],
-                        video_id=video_id,
-                        type=line[5],
-                        target=False,
-                        abnormal_start_frame=line[7],
-                        accident_frame=line[9],
-                        total_frames=line[10],
-                        fps=fps,
-                        is_val=video_id in cap_test.keys(),
-                        is_test=False,
+                if line[9] - self.cap["start_index"] >= fps * 3.5:
+                    data_list.append(
+                        dict(
+                            dataset="cap",
+                            filename=None,
+                            frame_dir=frame_dir,
+                            filename_tmpl=self.cap["filename_tmpl"],
+                            start_index=self.cap["start_index"],
+                            video_id=video_id,
+                            type=line[5],
+                            target=False,
+                            abnormal_start_frame=line[7],
+                            accident_frame=line[9],
+                            total_frames=line[10],
+                            fps=fps,
+                            is_val=video_id in cap_test.keys(),
+                            is_test=False,
+                        )
                     )
-                )
 
         if self.dada:
             fin = pd.read_excel(osp.join(self.dada["data_root"], self.dada["ann_file"]), sheet_name=1).values.tolist()
@@ -152,9 +155,6 @@ class MultiDataset(BaseDataset):
 
                 # only for ego-car accidents
                 if not 1 <= line[5] <= 18:
-                    continue
-
-                if line[7] - self.dada["start_index"] < fps * 0.5 or line[8] - self.dada["start_index"] < fps * 2:
                     continue
 
                 # keep the train videos
@@ -185,43 +185,45 @@ class MultiDataset(BaseDataset):
                 if video_id in correct_total_frames.keys():
                     line[10] = correct_total_frames[video_id]
 
-                data_list.append(
-                    dict(
-                        dataset="dada",
-                        filename=None,
-                        frame_dir=frame_dir,
-                        filename_tmpl=self.dada["filename_tmpl"],
-                        start_index=self.dada["start_index"],
-                        video_id=video_id,
-                        type=line[5],
-                        target=True,
-                        abnormal_start_frame=line[7],
-                        accident_frame=line[8],
-                        total_frames=line[10],
-                        fps=fps,
-                        is_val=video_id in dada_test.keys(),
-                        is_test=False,
+                if line[8] - self.dada["start_index"] >= fps * 2:
+                    data_list.append(
+                        dict(
+                            dataset="dada",
+                            filename=None,
+                            frame_dir=frame_dir,
+                            filename_tmpl=self.dada["filename_tmpl"],
+                            start_index=self.dada["start_index"],
+                            video_id=video_id,
+                            type=line[5],
+                            target=True,
+                            abnormal_start_frame=line[7],
+                            accident_frame=line[8],
+                            total_frames=line[10],
+                            fps=fps,
+                            is_val=video_id in dada_test.keys(),
+                            is_test=False,
+                        )
                     )
-                )
 
-                data_list.append(
-                    dict(
-                        dataset="dada",
-                        filename=None,
-                        frame_dir=frame_dir,
-                        filename_tmpl=self.dada["filename_tmpl"],
-                        start_index=self.dada["start_index"],
-                        video_id=video_id,
-                        type=line[5],
-                        target=False,
-                        abnormal_start_frame=line[7],
-                        accident_frame=line[8],
-                        total_frames=line[10],
-                        fps=fps,
-                        is_val=video_id in dada_test.keys(),
-                        is_test=False,
+                if line[8] - self.dada["start_index"] >= fps * 3.5:
+                    data_list.append(
+                        dict(
+                            dataset="dada",
+                            filename=None,
+                            frame_dir=frame_dir,
+                            filename_tmpl=self.dada["filename_tmpl"],
+                            start_index=self.dada["start_index"],
+                            video_id=video_id,
+                            type=line[5],
+                            target=False,
+                            abnormal_start_frame=line[7],
+                            accident_frame=line[8],
+                            total_frames=line[10],
+                            fps=fps,
+                            is_val=video_id in dada_test.keys(),
+                            is_test=False,
+                        )
                     )
-                )
 
         if self.d2city:
             fin = pd.read_csv(osp.join(self.d2city["data_root"], self.d2city["ann_file"])).values.tolist()
@@ -306,9 +308,29 @@ class MultiDataset(BaseDataset):
     def prepare_data(self, idx):
         data_info = self.get_data_info(idx)
         if data_info["dataset"] in ["d2city"]:
-            return self.pipeline_video(data_info)
+            pipeline = self.pipeline_video
         else:
-            return self.pipeline_frame(data_info)
+            pipeline = self.pipeline_frame
+        if self.modality == "two_stream":
+            data_info["flow"] = False
+            data_info_flow = None
+            for t in pipeline.transforms:
+                if t.__class__.__name__ in ["RandomResizedCrop", "Resize", "Flip", "Flow"]:
+                    if data_info_flow is None:
+                        data_info_flow = copy.deepcopy(data_info)
+                        data_info_flow["flow"] = True
+                    data_info = t(data_info)
+                    data_info_flow = t(data_info_flow)
+                    if t.__class__.__name__ == "Flow":
+                        data_info["imgs"] = [
+                            np.concatenate([frame, flow], axis=-2) for frame, flow in zip(data_info["imgs"], data_info_flow["imgs"])
+                        ]
+                        del data_info_flow
+                else:
+                    data_info = t(data_info)
+            return data_info
+        else:
+            return pipeline(data_info)
 
     def get_data_info(self, idx: int) -> dict:
         """Get annotation by index."""

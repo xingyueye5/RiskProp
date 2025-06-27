@@ -9,13 +9,17 @@ from mmengine.evaluator import BaseMetric
 
 from mmaction.registry import METRICS
 
+from .utils import visualize_pred_score
+
 
 @METRICS.register_module()
 class AnticipationMetric(BaseMetric):
-    def __init__(self, fpr_max: float = 0.1) -> None:
+    def __init__(self, fpr_max: float = 0.1, vis_list=[], output_dir=None) -> None:
         super().__init__()
 
         self.fpr_max = fpr_max
+        self.vis_list = vis_list
+        self.output_dir = output_dir
         self.epoch = None
 
     def process(self, data_batch: Sequence[Tuple[Any, Dict]], data_samples: Sequence[Dict]) -> None:
@@ -41,6 +45,13 @@ class AnticipationMetric(BaseMetric):
                 result["abnormal_start_ind"] = 0
                 result["accident_ind"] = 0
             result["video_id"] = data_sample["video_id"]
+            result["dataset"] = data_sample["dataset"]
+            result["frame_dir"] = data_sample["frame_dir"]
+            result["filename_tmpl"] = data_sample["filename_tmpl"]
+            result["type"] = data_sample["type"]
+            result["frame_inds"] = data_sample["frame_inds"]
+            result["abnormal_start_frame"] = data_sample["abnormal_start_frame"]
+            result["accident_frame"] = data_sample["accident_frame"]
             result["is_val"] = data_sample["is_val"]
             result["is_test"] = data_sample["is_test"]
             self.results.append(result)
@@ -82,6 +93,12 @@ class AnticipationMetric(BaseMetric):
         else:
             df.to_csv("outputs/sample_submission.csv", index=False)
 
+        for result in results:
+            result["threshold"] = eval_results.get(f"threshold@{self.fpr_max:.2f}", 0.5)
+            if result["video_id"] in self.vis_list:
+                if result["target"] is True:
+                    visualize_pred_score(result, self.output_dir, self.epoch)
+
         return eval_results
 
     def calculate(self, preds, labels, abnormal_start_inds, accident_inds, sep) -> Dict:
@@ -102,6 +119,7 @@ class AnticipationMetric(BaseMetric):
 
         preds_n = -np.sort(-np.concatenate([pred for pred, label in zip(preds, labels) if not label]))
         eval_results[f"\nfpr{sep}0.5"] = sum(preds_n >= 0.5) / len(preds_n)
+        eval_results[f"threshold{sep}{self.fpr_max:.2f}"] = preds_n[int(len(preds_n) * self.fpr_max)]
 
         ttas = [
             (i - np.argmax(pred[: i + 1] >= 0.5)) / 10 if np.any(pred[: i + 1] >= 0.5) else 0
@@ -120,6 +138,24 @@ class AnticipationMetric(BaseMetric):
 
         df = pd.DataFrame(dict(fpr=[(i + 1) / len(ttas) for i in range(len(ttas))], tta=ttas))
         df.to_csv(f"outputs/fpr_tta_old_{self.epoch}.csv", index=False)
+
+        ttas = [
+            (20 - np.argmax(pred[i - 20 : i + 1] >= 0.5)) / 10 if np.any(pred[i - 20 : i + 1] >= 0.5) else 0
+            for pred, label, i in zip(preds, labels, accident_inds)
+            if label
+        ]
+        eval_results[f"tta_2s{sep}0.5"] = sum(ttas) / len(ttas)
+
+        ttas = [
+            (20 - np.argmax(pred[i - 20 : i + 1, None] >= preds_n, axis=0)) / 10 * np.any(pred[i - 20 : i + 1, None] >= preds_n, axis=0)
+            for pred, label, i in zip(preds, labels, accident_inds)
+            if label
+        ]
+        ttas = np.array(ttas).mean(axis=0)
+        eval_results[f"mtta_2s{sep}0.1"] = ttas[: int(len(ttas) * self.fpr_max)].mean()
+
+        df = pd.DataFrame(dict(fpr=[(i + 1) / len(ttas) for i in range(len(ttas))], tta=ttas))
+        df.to_csv(f"outputs/fpr_tta_2s_{self.epoch}.csv", index=False)
 
         ttas = [
             (j - i - np.argmax(pred[i : j + 1] >= 0.5)) / 10 if np.any(pred[i : j + 1] >= 0.5) else 0

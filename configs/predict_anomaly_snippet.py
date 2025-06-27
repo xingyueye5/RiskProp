@@ -10,9 +10,11 @@ nexar = dict(data_root="data/nexar-collision-prediction", ann_file="annotations.
 clip_len = 5
 num_clips = 30
 modality = "rgb"
-assert modality in ["rgb", "flow"], f"modality {modality} is not supported"
+assert modality in ["rgb", "flow", "both", "two_stream"], f"modality {modality} is not supported"
+vis_list = []
 
 algorithm_keys = (
+    "dataset",
     "frame_dir",
     "filename_tmpl",
     "img_shape",
@@ -90,8 +92,9 @@ train_dataloader = dict(
         nexar=nexar,
         pipeline_video=train_pipeline_video,
         pipeline_frame=train_pipeline_frame,
+        modality=modality,
         test_mode=False,
-        train_with_val=True,
+        train_with_val=False,
         # indices=list(range(20)),
     ),
 )
@@ -108,6 +111,7 @@ val_dataloader = dict(
         nexar=nexar,
         pipeline_video=val_pipeline_video,
         pipeline_frame=val_pipeline_frame,
+        modality=modality,
         test_mode=True,
         val_train=False,
         # indices=list(range(20)),
@@ -115,7 +119,7 @@ val_dataloader = dict(
 )
 test_dataloader = val_dataloader
 
-val_evaluator = dict(type="AnticipationMetric", fpr_max=0.1)
+val_evaluator = dict(type="AnticipationMetric", fpr_max=0.1, vis_list=vis_list, output_dir="visualizations")
 test_evaluator = val_evaluator
 
 train_cfg = dict(type="EpochBasedTrainLoop", max_epochs=50, val_begin=1, val_interval=1)
@@ -125,7 +129,7 @@ default_hooks = dict(checkpoint=dict(type="CheckpointHook", interval=1, max_keep
 custom_hooks = [dict(type="EpochHook"), dict(type="AnticipationMetricHook")]
 
 model = dict(
-    type="Recognizer3D",
+    type="Recognizer3DTwoStream" if modality in ["both", "two_stream"] else "Recognizer3D",
     backbone=dict(
         type="ResNet3dSlowOnly",
         depth=50,
@@ -140,7 +144,9 @@ model = dict(
     cls_head=dict(
         type="AnticipationHead",
         pos_weight=1,
+        clip_len=clip_len,
         num_clips=num_clips,
+        two_stream = modality in ["both", "two_stream"],
         with_rnn=False,
         with_decoder=False,
         label_with="annotation",

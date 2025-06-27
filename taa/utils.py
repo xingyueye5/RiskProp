@@ -100,23 +100,25 @@ def visualize_tensor_as_videos(tensor, output_dir, fps=10):
 
 def visualize_pred_score(result, output_dir, epoch=None, fps=10):
     pred = result["pred"]
-    label = result["label"]
+    target = result["target"]
+    accident_ind = result["accident_ind"]
+    video_id = result["video_id"]
+    dataset = result["dataset"]
     frame_dir = result["frame_dir"]
     filename_tmpl = result["filename_tmpl"]
+    type = result["type"]
     frame_inds = result["frame_inds"]
     abnormal_start_frame = result["abnormal_start_frame"]
-    abnormal_end_frame = result["abnormal_end_frame"]
     accident_frame = result["accident_frame"]
-    video_id = result["video_id"]
-    type = result["type"]
     threshold = result["threshold"]
 
     os.makedirs(output_dir, exist_ok=True)
     # 创建视频保存路径
-    if epoch is not None:
-        video_path = os.path.join(output_dir, f"{type}_{video_id}_{epoch}.mp4")
+    epoch = f"_{epoch}" if epoch is not None else ""
+    if dataset == "cap":
+        video_path = os.path.join(output_dir, f"{dataset}_{type}_{video_id}{epoch}.mp4")
     else:
-        video_path = os.path.join(output_dir, f"{type}_{video_id}.mp4")
+        video_path = os.path.join(output_dir, f"{dataset}_{video_id}{epoch}.mp4")
 
     # 创建 VideoWriter 对象
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # 使用 MP4 编码
@@ -126,54 +128,56 @@ def visualize_pred_score(result, output_dir, epoch=None, fps=10):
         frame_path = os.path.join(frame_dir, filename_tmpl.format(frame_ind))
         frame = cv2.imread(frame_path)
         frame = cv2.resize(frame, (640, 360))
-        if frame_ind < abnormal_start_frame:
-            # 绘制绿色条带
-            cv2.rectangle(frame, (0, 0), (640, 36), (0, 255, 0), -1)
-            cv2.putText(
-                frame,
-                "Safe Scene",
-                (420, 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.72,
-                (255, 255, 255),
-                2,
-            )
-        elif abnormal_start_frame <= frame_ind < accident_frame:
-            # 绘制蓝色条带
-            cv2.rectangle(frame, (0, 0), (640, 36), (255, 0, 0), -1)
-            cv2.putText(
-                frame,
-                "Anomaly Appeared",
-                (420, 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.72,
-                (255, 255, 255),
-                2,
-            )
-        elif accident_frame <= frame_ind < abnormal_end_frame:
-            # 绘制红色条带
-            cv2.rectangle(frame, (0, 0), (640, 36), (0, 0, 255), -1)
-            cv2.putText(
-                frame,
-                "Accident Occurred",
-                (420, 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.72,
-                (255, 255, 255),
-                2,
-            )
-        elif abnormal_end_frame <= frame_ind:
-            # 绘制灰色条带
-            cv2.rectangle(frame, (0, 0), (640, 36), (128, 128, 128), -1)
-            cv2.putText(
-                frame,
-                "Accident Ended",
-                (420, 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.72,
-                (255, 255, 255),
-                2,
-            )
+        if target is not None:
+            if target:
+                if frame_ind < abnormal_start_frame:
+                    # 绘制绿色条带
+                    cv2.rectangle(frame, (0, 0), (640, 36), (0, 255, 0), -1)
+                    cv2.putText(
+                        frame,
+                        "Safe Scenario",
+                        (420, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.72,
+                        (255, 255, 255),
+                        2,
+                    )
+                elif abnormal_start_frame <= frame_ind < accident_frame:
+                    # 绘制蓝色条带
+                    cv2.rectangle(frame, (0, 0), (640, 36), (255, 0, 0), -1)
+                    cv2.putText(
+                        frame,
+                        "Anomaly Appeared",
+                        (420, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.72,
+                        (255, 255, 255),
+                        2,
+                    )
+                elif accident_frame <= frame_ind:
+                    # 绘制红色条带
+                    cv2.rectangle(frame, (0, 0), (640, 36), (0, 0, 255), -1)
+                    cv2.putText(
+                        frame,
+                        "Accident Occurred",
+                        (420, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.72,
+                        (255, 255, 255),
+                        2,
+                    )
+            else:
+                # 绘制绿色条带
+                cv2.rectangle(frame, (0, 0), (640, 36), (0, 255, 0), -1)
+                cv2.putText(
+                    frame,
+                    "Safe Scenario",
+                    (420, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.72,
+                    (255, 255, 255),
+                    2,
+                )
         # 绘制预测分数
         if len(pred.shape) == 1:
             if pred[i] >= threshold:
@@ -218,7 +222,7 @@ def visualize_pred_score(result, output_dir, epoch=None, fps=10):
                 1,
             )
             for j in range(len(pred[i])):
-                l = "?" if i + j >= len(label) else int(label[i + j])
+                l = int(i + j == accident_ind) if target else 0
                 cv2.putText(
                     frame,
                     f"{j/fps:.1f}s  {pred[i][j]:.2f}  {l}  " + "*" * int(pred[i][j] * 10 // 1),

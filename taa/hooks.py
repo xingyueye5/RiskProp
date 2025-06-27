@@ -7,6 +7,10 @@ import os.path as osp
 
 @HOOKS.register_module()
 class EpochHook(Hook):
+    def before_train_epoch(self, runner) -> None:
+        model = runner.model.module if hasattr(runner.model, "module") else runner.model
+        model.cls_head.epoch = runner.epoch
+
     def before_val_epoch(self, runner) -> None:
         for metric in runner.val_evaluator.metrics:
             metric.epoch = runner.epoch
