@@ -130,15 +130,13 @@ custom_hooks = [dict(type="EpochHook"), dict(type="AnticipationMetricHook")]
 
 model = dict(
     type="Recognizer2D",
-    backbone=dict(
-        type="ResNet", pretrained="https://download.pytorch.org/models/resnet50-11ad3fa6.pth", depth=50, norm_eval=False
-    ),
+    backbone=dict(type="ResNet", pretrained="https://download.pytorch.org/models/resnet50-11ad3fa6.pth", depth=50, norm_eval=False),
     cls_head=dict(
         type="AnticipationHead",
         pos_weight=10,
         clip_len=clip_len,
         num_clips=num_clips,
-        two_stream = modality in ["both", "two_stream"],
+        two_stream=modality in ["both", "two_stream"],
         with_rnn=True,
         with_decoder=True,
         label_with="annotation",

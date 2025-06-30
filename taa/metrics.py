@@ -9,6 +9,7 @@ from mmengine.evaluator import BaseMetric
 
 from mmaction.registry import METRICS
 
+from sklearn.metrics import average_precision_score
 from .utils import visualize_pred_score
 
 
@@ -187,6 +188,22 @@ class AnticipationMetric(BaseMetric):
         eval_results[f"AUC{sep}1.5s"], fpr_15, tpr_15 = auc(np.array(y), np.array(preds_15 + preds_n), self.fpr_max)
         eval_results[f"mAUC{sep}"] = (
             eval_results[f"AUC{sep}0.5s"] + eval_results[f"AUC{sep}1.0s"] + eval_results[f"AUC{sep}1.5s"]
+        ) / 3
+
+        eval_results[f"AUC_full{sep}0.0s"], fpr_0, tpr_0 = auc(np.array(y), np.array(preds_0 + preds_n), 1)
+        eval_results[f"AUC_full{sep}0.5s"], fpr_5, tpr_5 = auc(np.array(y), np.array(preds_5 + preds_n), 1)
+        eval_results[f"AUC_full{sep}1.0s"], fpr_10, tpr_10 = auc(np.array(y), np.array(preds_10 + preds_n), 1)
+        eval_results[f"AUC_full{sep}1.5s"], fpr_15, tpr_15 = auc(np.array(y), np.array(preds_15 + preds_n), 1)
+        eval_results[f"mAUC_full{sep}"] = (
+            eval_results[f"AUC_full{sep}0.5s"] + eval_results[f"AUC_full{sep}1.0s"] + eval_results[f"AUC_full{sep}1.5s"]
+        ) / 3
+
+        eval_results[f"AP_full{sep}0.0s"] = average_precision_score(np.array(y), np.array(preds_0 + preds_n))
+        eval_results[f"AP_full{sep}0.5s"] = average_precision_score(np.array(y), np.array(preds_5 + preds_n))
+        eval_results[f"AP_full{sep}1.0s"] = average_precision_score(np.array(y), np.array(preds_10 + preds_n))
+        eval_results[f"AP_full{sep}1.5s"] = average_precision_score(np.array(y), np.array(preds_15 + preds_n))
+        eval_results[f"mAP_full{sep}"] = (
+            eval_results[f"AP_full{sep}0.5s"] + eval_results[f"AP_full{sep}1.0s"] + eval_results[f"AP_full{sep}1.5s"]
         ) / 3
 
         df = pd.DataFrame(dict(fpr=fpr_0, tpr=tpr_0))
