@@ -1,4 +1,4 @@
-RiskProp: Collision-Anchored Self-supervised Temporal Constraints for Early Accident Anticipation
+## RiskProp: Collision-Anchored Self-supervised Temporal Constraints for Early Accident Anticipation
 
 ### Installation
 

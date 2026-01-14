@@ -1,9 +1,10 @@
 # local file
-*.circleci/
-*.github/
+.circleci/
+.github/
 docker/
 ablation/
 demo/
+projects/
 
 
 
