@@ -1,0 +1,484 @@
+# -*- coding: utf-8 -*-
+"""
+compare_crash.py — 分布式训练 CRASH 模型，复用 compare_dis.py 的 mmengine 数据管线与指标
+- 预设 NCCL 环境，规避 watchdog 超时
+- 使用 mmengine Runner 构建数据加载，指标复用 AnticipationMetric
+- 保持 CRASH 模型与损失实现不变，仅桥接数据格式
+"""
+
+import os
+import sys
+import pathlib
+import contextlib
+from typing import Dict, Any, List
+
+import torch
+import numpy as np
+
+
+def _normalize_env_pre_import():
+    """在 import 之前设置常见 NCCL 环境变量，提升稳定性。"""
+    os.environ.setdefault('NCCL_BLOCKING_WAIT', '1')
+    os.environ.setdefault('NCCL_ASYNC_ERROR_HANDLING', '1')
+    os.environ.setdefault('NCCL_IB_DISABLE', '1')
+    os.environ.setdefault('NCCL_P2P_DISABLE', '1')
+
+    lr_raw = os.environ.get('LOCAL_RANK', '0')
+    try:
+        int(lr_raw)
+    except Exception:
+        os.environ['LOCAL_RANK'] = '0'
+
+    cvd_raw = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+    parts = [p.strip() for p in cvd_raw.split(',') if p.strip()]
+    if parts:
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(parts)
+
+    try:
+        cuda_cnt = torch.cuda.device_count()
+    except Exception:
+        cuda_cnt = 0
+    print(
+        f"[pre-import] pid={os.getpid()} LR={os.environ.get('LOCAL_RANK')} "
+        f"CVD={os.environ.get('CUDA_VISIBLE_DEVICES')} cuda_count={cuda_cnt}",
+        file=sys.stderr,
+    )
+
+
+_normalize_env_pre_import()
+
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+
+def setup_distributed() -> int:
+    """初始化分布式后端，返回 local_rank。"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        dist.init_process_group(backend='nccl', init_method='env://')
+        local_rank = int(os.environ.get('LOCAL_RANK', '0'))
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+        print(
+            f"[DDP] initialized rank={dist.get_rank()} / {dist.get_world_size()} "
+            f"(local_rank={local_rank})",
+            file=sys.stderr,
+        )
+        return local_rank
+    print("[Single GPU] non-distributed mode.", file=sys.stderr)
+    return 0
+
+
+def cleanup_distributed():
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+import importlib
+
+mm_logger_mod = importlib.import_module('mmengine.logging.logger')
+
+
+def _safe_get_device_id():
+    if torch.cuda.is_available():
+        try:
+            return int(torch.cuda.current_device())
+        except Exception:
+            return 0
+    return 0
+
+
+mm_logger_mod._get_device_id = _safe_get_device_id  # type: ignore
+
+from mmengine.runner import Runner
+from mmengine.config import Config as MMEngineConfig
+from mmengine.registry import init_default_scope
+from mmaction.utils import register_all_modules
+import torch.optim as optim
+
+from torchvision import models as tv_models
+
+# AnticipationMetric 在原工程的 taa.metrics 中
+cap_metrics_mod = importlib.import_module('taa.metrics')
+AnticipationMetric = cap_metrics_mod.AnticipationMetric
+
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent
+CRASH_ROOT = PROJECT_ROOT / 'ablation' / 'CRASH'
+if str(CRASH_ROOT) not in sys.path:
+    sys.path.insert(0, str(CRASH_ROOT))
+
+from src.Models import CRASH  # type: ignore  # noqa: E402
+
+
+DEFAULT_CRASH_CFG = dict(
+    hidden_dim=512,
+    latent_dim=256,
+    num_rnn=2,
+    n_obj=19,
+    fps=20.0,
+    loss_u1=1.0,
+    loss_u2=15.0,
+    feature_dim=512,
+    max_epochs=30,
+    lr=1.2e-4,
+)
+
+
+def _get_sample_attr(ds, key, default=None):
+    if hasattr(ds, key) and getattr(ds, key) is not None:
+        return getattr(ds, key)
+    if hasattr(ds, 'metainfo') and ds.metainfo is not None and key in ds.metainfo:
+        return ds.metainfo[key]
+    if hasattr(ds, 'algorithms') and ds.algorithms is not None and key in ds.algorithms:
+        return ds.algorithms[key]
+    return default
+
+
+class FrameFeatureExtractor(torch.nn.Module):
+    """使用 ResNet18 提取帧级 512 维特征，冻结参数。"""
+
+    def __init__(self, device: torch.device):
+        super().__init__()
+        weights = tg_weights()
+        if weights is not None:
+            backbone = tv_models.resnet18(weights=weights)  # type: ignore[arg-type]
+        else:  # 兼容旧版 torchvision
+            backbone = tv_models.resnet18(pretrained=True)
+        backbone.fc = torch.nn.Identity()
+        for p in backbone.parameters():
+            p.requires_grad = False
+        self.backbone = backbone
+        self.backbone.eval()
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        self.to(device)
+
+    @torch.no_grad()
+    def forward(self, frames: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            frames: (B, T, C, H, W) in [0,1]
+        Returns:
+            frame_feats: (B, T, 512)
+        """
+        B, T, C, H, W = frames.shape
+        x = frames.view(B * T, C, H, W)
+        x = (x - self.mean) / self.std
+        feats = self.backbone(x)  # (B*T, 512)
+        feats = feats.view(B, T, -1)
+        return feats
+
+
+def tg_weights():
+    """兼容 torchvision 不同版本的默认权重获取。"""
+    try:  # torchvision >= 0.13
+        from torchvision.models import ResNet18_Weights  # type: ignore
+        return ResNet18_Weights.DEFAULT
+    except Exception:
+        return None  # deprecated path -> torchvision 将自动加载预训练
+
+
+def one_hot(targets: torch.Tensor, num_classes: int = 2) -> torch.Tensor:
+    out = torch.zeros(targets.size(0), num_classes, device=targets.device, dtype=torch.float32)
+    out.scatter_(1, targets.view(-1, 1), 1.0)
+    return out
+
+
+def prepare_batch(
+    data_batch: Dict[str, Any],
+    device: torch.device,
+    feature_extractor: FrameFeatureExtractor,
+    cfg: Dict[str, Any],
+):
+    inputs = data_batch['inputs']
+    if isinstance(inputs, (list, tuple)):
+        x = torch.cat(inputs, dim=0)
+    else:
+        x = inputs
+    x = x.permute(2, 0, 1, 3, 4).contiguous()  # -> (B, T, C, H, W)
+    data_samples: List[Any] = data_batch['data_samples']
+    batch_size = len(data_samples)
+    if x.size(0) != batch_size:
+        raise RuntimeError(f"Mismatched batch size: tensor {x.size(0)} vs samples {batch_size}")
+
+    frames = x.float().to(device) / 255.0
+
+    with torch.no_grad():
+        frame_feats = feature_extractor(frames)  # (B, T, 512)
+    frame_feats = frame_feats.unsqueeze(2)  # (B, T, 1, 512)
+    obj_feats = torch.zeros(
+        frames.size(0),
+        frames.size(1),
+        cfg['n_obj'],
+        cfg['feature_dim'],
+        device=device,
+        dtype=frame_feats.dtype,
+    )
+    features = torch.cat([frame_feats, obj_feats], dim=2)  # (B, T, 1+n_obj, 512)
+
+    targets, toas, fps_list = [], [], []
+    for ds in data_samples:
+        target = 1 if bool(_get_sample_attr(ds, 'target', False)) else 0
+        fps = float(_get_sample_attr(ds, 'fps', cfg['fps']) or cfg['fps'])
+        accident_frame = _get_sample_attr(ds, 'accident_frame', None)
+        start_index = _get_sample_attr(ds, 'start_index', 0)
+        T = frames.size(1)
+        if target and accident_frame is not None:
+            toa = max(int(accident_frame) - int(start_index), 0)
+        else:
+            toa = int(fps * T)
+        targets.append(target)
+        toas.append(float(toa))
+        fps_list.append(fps)
+
+    y = one_hot(torch.tensor(targets, device=device, dtype=torch.long))
+    toa_tensor = torch.tensor(toas, device=device, dtype=torch.float32)
+
+    meta = dict(
+        frames=frames,
+        fps=torch.tensor(fps_list, device=device, dtype=torch.float32),
+    )
+    return features, y, toa_tensor, meta
+
+
+@torch.no_grad()
+def _eval_step_to_metric(preds_np: np.ndarray, data_batch: Dict[str, Any], metric: AnticipationMetric, T: int):
+    data_samples = data_batch['data_samples']
+    for i in range(preds_np.shape[0]):
+        ds = data_samples[i]
+
+        def get_k(k, default=None):
+            return _get_sample_attr(ds, k, default)
+
+        result = dict(
+            pred_score=torch.from_numpy(preds_np[i]),
+            target=bool(get_k('target', False)),
+            abnormal_start_frame=get_k('abnormal_start_frame', 0),
+            accident_frame=get_k('accident_frame', 0),
+            frame_inds=get_k('frame_inds', torch.arange(T).numpy()),
+            video_id=get_k('video_id', f"video_{i}"),
+            dataset=get_k('dataset', 'unknown'),
+            frame_dir=get_k('frame_dir', ''),
+            filename_tmpl=get_k('filename_tmpl', '{:06}.jpg'),
+            type=get_k('type', ''),
+            is_val=bool(get_k('is_val', False)),
+            is_test=bool(get_k('is_test', False)),
+        )
+        metric.process(None, [result])
+
+
+def run_epoch(
+    model: torch.nn.Module,
+    loader,
+    device: torch.device,
+    cfg: Dict[str, Any],
+    feature_extractor: FrameFeatureExtractor,
+    optimizer: optim.Optimizer = None,
+    metric: AnticipationMetric = None,
+    rank: int = 0,
+) -> Dict[str, float]:
+    train_mode = optimizer is not None
+    model.train(train_mode)
+    totals: Dict[str, float] = {}
+    batches = 0
+    ctx = contextlib.nullcontext() if train_mode else torch.no_grad()
+
+    for data_batch in loader:
+        feats, labels, toa, _ = prepare_batch(data_batch, device, feature_extractor, cfg)
+
+        with ctx:
+            losses, all_outputs, _ = model(feats, labels, toa, hidden_in=None, nbatch=len(loader), testing=not train_mode)
+
+        total_loss = cfg['loss_u1'] / 2.0 * losses['cross_entropy']
+        if 'auxloss' in losses:
+            total_loss = total_loss + cfg['loss_u2'] / 2.0 * losses['auxloss']
+        total_loss = total_loss + losses.get('log', 0)
+        losses['total_loss'] = total_loss
+
+        if train_mode:
+            optimizer.zero_grad()
+            total_loss.mean().backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
+            optimizer.step()
+
+        for key, value in losses.items():
+            totals[key] = totals.get(key, 0.0) + float(value.detach().mean().cpu())
+        batches += 1
+
+        if metric is not None and rank == 0:
+            logits = torch.stack(all_outputs, dim=1)  # (B, T, 2)
+            probs = torch.softmax(logits, dim=-1)[..., 1].detach().cpu().numpy()
+            _eval_step_to_metric(probs, data_batch, metric, probs.shape[1])
+
+    if batches == 0:
+        return {key: 0.0 for key in totals}
+
+    avg_losses: Dict[str, float] = {}
+    for key, value in totals.items():
+        avg = torch.tensor([value / batches], device=device)
+        if dist.is_initialized():
+            dist.all_reduce(avg, op=dist.ReduceOp.SUM)
+            avg /= dist.get_world_size()
+        avg_losses[key] = avg.item()
+    return avg_losses
+
+
+def build_model(cfg: Dict[str, Any], device: torch.device):
+    model = CRASH(
+        x_dim=cfg['feature_dim'],
+        h_dim=cfg['hidden_dim'],
+        z_dim=cfg['latent_dim'],
+        n_layers=cfg['num_rnn'],
+        n_obj=cfg['n_obj'],
+        n_frames=cfg.get('n_frames', 100),
+        fps=cfg['fps'],
+        with_saa=True,
+    )
+    return model.to(device)
+
+
+def main():
+    local_rank = setup_distributed()
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f'cuda:{local_rank}')
+    else:
+        device = torch.device('cpu')
+
+    register_all_modules()
+
+    mm_cfg = MMEngineConfig.fromfile("configs/predict_anomaly_snippet.py")
+    init_default_scope('mmaction')
+    if not hasattr(mm_cfg, 'launcher'):
+        mm_cfg.launcher = 'pytorch'
+    if 'work_dir' not in mm_cfg:
+        mm_cfg.work_dir = './work_dirs/crash_baseline'
+
+    # 统一 dataloader 设置
+    if isinstance(mm_cfg.train_dataloader, dict):
+        mm_cfg.train_dataloader['num_workers'] = min(int(mm_cfg.train_dataloader.get('num_workers', 4)), 4)
+        mm_cfg.train_dataloader['persistent_workers'] = False
+        sampler_cfg = mm_cfg.train_dataloader.get('sampler', {})
+        if isinstance(sampler_cfg, dict):
+            sampler_cfg['round_up'] = True
+            mm_cfg.train_dataloader['sampler'] = sampler_cfg
+    if isinstance(mm_cfg.val_dataloader, dict):
+        mm_cfg.val_dataloader['num_workers'] = min(int(mm_cfg.val_dataloader.get('num_workers', 4)), 4)
+        mm_cfg.val_dataloader['persistent_workers'] = False
+        sampler_cfg = mm_cfg.val_dataloader.get('sampler', {})
+        if isinstance(sampler_cfg, dict):
+            sampler_cfg['round_up'] = True
+            mm_cfg.val_dataloader['sampler'] = sampler_cfg
+
+    runner = Runner.from_cfg(mm_cfg)
+
+    global_rank = dist.get_rank() if dist.is_initialized() else 0
+    is_main = (global_rank == 0)
+    if is_main:
+        os.makedirs(mm_cfg.work_dir, exist_ok=True)
+
+    train_loader = runner.build_dataloader(mm_cfg.train_dataloader)
+    val_loader = runner.build_dataloader(mm_cfg.val_dataloader)
+
+    if dist.is_initialized():
+        dist.barrier()
+
+    cfg = DEFAULT_CRASH_CFG.copy()
+    feature_extractor = FrameFeatureExtractor(device)
+
+    model = build_model(cfg, device)
+    if dist.is_initialized():
+        model = DDP(
+            model,
+            device_ids=[local_rank],
+            find_unused_parameters=True,
+            broadcast_buffers=False,
+        )
+
+    optimizer = optim.Adam(model.parameters(), lr=cfg['lr'])
+    metric = AnticipationMetric(fpr_max=0.1, output_dir="outputs") if is_main else None
+
+    best_mAUC = -1.0
+    best_epoch = -1
+    save_dir = "outputs"
+    if is_main:
+        os.makedirs(save_dir, exist_ok=True)
+
+    max_epochs = cfg['max_epochs']
+    for epoch in range(1, max_epochs + 1):
+        if dist.is_initialized():
+            sampler = getattr(train_loader, 'sampler', None)
+            if hasattr(sampler, 'set_epoch'):
+                sampler.set_epoch(epoch)
+            val_sampler = getattr(val_loader, 'sampler', None)
+            if hasattr(val_sampler, 'set_epoch'):
+                val_sampler.set_epoch(epoch)
+
+        train_losses = run_epoch(
+            model,
+            train_loader,
+            device,
+            cfg,
+            feature_extractor,
+            optimizer=optimizer,
+            metric=None,
+            rank=global_rank,
+        )
+        if is_main:
+            train_msg = " ".join(f"{k}: {v:.4f}" for k, v in train_losses.items())
+            print(f"[Epoch {epoch}] Train {train_msg}")
+
+        if dist.is_initialized():
+            dist.barrier()
+
+        if is_main and metric is not None:
+            if hasattr(metric, "reset"):
+                metric.reset()
+            elif hasattr(metric, "results"):
+                metric.results.clear()
+            metric.epoch = epoch
+
+        if dist.is_initialized():
+            dist.barrier()
+
+        val_losses = run_epoch(
+            model,
+            val_loader,
+            device,
+            cfg,
+            feature_extractor,
+            optimizer=None,
+            metric=metric,
+            rank=global_rank,
+        )
+
+        if dist.is_initialized():
+            dist.barrier()
+
+        if is_main and metric is not None:
+            results = metric.evaluate()
+            val_msg = " ".join(f"{k}: {v:.4f}" for k, v in val_losses.items())
+            print(f"[Epoch {epoch}] Val losses {val_msg}")
+            print(f"[Epoch {epoch}] Val results: {results}")
+
+            mauc_key = "mAUC@" if "mAUC@" in results else ("mAUC#" if "mAUC#" in results else None)
+            current_mAUC = results.get(mauc_key, 0.0) if mauc_key else 0.0
+            if current_mAUC > best_mAUC:
+                best_mAUC = current_mAUC
+                best_epoch = epoch
+                best_path = f"{save_dir}/crash_best_mAUC_epoch_{epoch:03d}_{best_mAUC:.4f}.pth"
+                torch.save({
+                    "epoch": epoch,
+                    "model_state_dict": model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "best_mAUC": best_mAUC,
+                }, best_path)
+                print(f"✅ [Epoch {epoch}] New best mAUC = {best_mAUC:.4f}, saved to {best_path}")
+
+    if is_main:
+        print(f"\n🎯 Training done. Best mAUC = {best_mAUC:.4f} at epoch {best_epoch}")
+
+    cleanup_distributed()
+
+
+if __name__ == '__main__':
+    main()

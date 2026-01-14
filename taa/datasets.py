@@ -35,6 +35,10 @@ class MultiDataset(BaseDataset):
         self.d2city = d2city
         self.nexar = nexar
 
+        self._cap_texts = {}
+        if cap is not None:
+            self._cap_texts = self._load_cap_texts(cap)
+
         self.modality = modality
         assert self.modality in ["rgb", "flow", "both", "two_stream"], f"modality {self.modality} is not supported"
         self.test_mode = test_mode
@@ -50,12 +54,38 @@ class MultiDataset(BaseDataset):
 
         self.full_init()
 
+    def _load_cap_texts(self, cap_cfg):
+        ann_path = osp.join(cap_cfg["data_root"], cap_cfg["ann_file"])
+        if not exists(ann_path):
+            return {}
+        try:
+            df = pd.read_excel(ann_path, sheet_name=1)
+        except Exception:
+            df = pd.read_excel(ann_path)
+
+        desired = {"fact", "effect", "reason", "introspection", "description", "advice", "text"}
+        text_columns = [col for col in df.columns if str(col).strip().lower() in desired]
+        text_map = {}
+        for _, row in df.iterrows():
+            video_id = str(row.iloc[0]).zfill(6)
+            snippets = []
+            for col in text_columns:
+                value = row.get(col)
+                if isinstance(value, str):
+                    value = value.strip()
+                if value:
+                    snippets.append(str(value))
+            text_map[video_id] = " ".join(snippets)
+        return text_map
+
     def load_data_list(self):
         data_list = []
         if self.cap:
-            fin = pd.read_excel(osp.join(self.cap["data_root"], self.cap["ann_file"]), sheet_name=1).values.tolist()
+            ann_path = osp.join(self.cap["data_root"], self.cap["ann_file"])
+            fin = pd.read_excel(ann_path, sheet_name=1).values.tolist()
             for line in fin:
                 video_id = str(line[0]).zfill(6)
+                caption = self._cap_texts.get(video_id, "")
                 if 1 <= line[5] <= 10:
                     frame_dir = "1-10"
                 elif line[5] == 11:
@@ -118,6 +148,7 @@ class MultiDataset(BaseDataset):
                             fps=fps,
                             is_val=video_id in cap_test.keys(),
                             is_test=False,
+                            text=caption,
                         )
                     )
 
@@ -138,6 +169,7 @@ class MultiDataset(BaseDataset):
                             fps=fps,
                             is_val=video_id in cap_test.keys(),
                             is_test=False,
+                            text=caption,
                         )
                     )
 
@@ -336,4 +368,6 @@ class MultiDataset(BaseDataset):
         """Get annotation by index."""
         data_info = super().get_data_info(idx)
         data_info["modality"] = "RGB"
+        if data_info.get("dataset") == "cap":
+            data_info["text"] = self._cap_texts.get(data_info["video_id"], "")
         return data_info

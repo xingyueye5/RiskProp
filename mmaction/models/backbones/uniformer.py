@@ -12,7 +12,12 @@ from mmengine.utils import to_2tuple
 
 from mmaction.registry import MODELS
 
-logger = MMLogger.get_current_instance()
+# Use a safe logger accessor to avoid device/context access during import time
+def _log_info(message: str) -> None:
+    try:
+        MMLogger.get_current_instance().info(message)
+    except Exception:
+        pass
 
 MODEL_PATH = 'https://download.openmmlab.com/mmaction/v1.0/recognition'
 _MODELS = {
@@ -600,7 +605,7 @@ class UniFormer(BaseModule):
                         weight_2d: torch.Tensor,
                         time_dim: int,
                         center: bool = True) -> torch.Tensor:
-        logger.info(f'Init center: {center}')
+        _log_info(f'Init center: {center}')
         if center:
             weight_3d = torch.zeros(*weight_2d.shape)
             weight_3d = weight_3d.unsqueeze(2).repeat(1, 1, time_dim, 1, 1)
@@ -623,17 +628,17 @@ class UniFormer(BaseModule):
         """
         if pretrained is not None:
             model_path = _MODELS[pretrained]
-            logger.info(f'Load ImageNet pretrained model from {model_path}')
+            _log_info(f'Load ImageNet pretrained model from {model_path}')
             state_dict = _load_checkpoint(model_path, map_location='cpu')
             state_dict_3d = self.state_dict()
             for k in state_dict.keys():
                 if k in state_dict_3d.keys(
                 ) and state_dict[k].shape != state_dict_3d[k].shape:
                     if len(state_dict_3d[k].shape) <= 2:
-                        logger.info(f'Ignore: {k}')
+                        _log_info(f'Ignore: {k}')
                         continue
-                    logger.info(f'Inflate: {k}, {state_dict[k].shape}' +
-                                f' => {state_dict_3d[k].shape}')
+                    _log_info(f'Inflate: {k}, {state_dict[k].shape}' +
+                              f' => {state_dict_3d[k].shape}')
                     time_dim = state_dict_3d[k].shape[2]
                     state_dict[k] = self._inflate_weight(
                         state_dict[k], time_dim)
@@ -642,8 +647,7 @@ class UniFormer(BaseModule):
     def init_weights(self):
         """Initialize the weights in backbone."""
         if self.pretrained2d:
-            logger = MMLogger.get_current_instance()
-            logger.info(f'load model from: {self.pretrained}')
+            _log_info(f'load model from: {self.pretrained}')
             self._load_pretrained(self.pretrained)
         else:
             if self.pretrained:

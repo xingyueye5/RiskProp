@@ -5,7 +5,11 @@ from .data_preprocessors import *  # noqa: F401,F403
 from .heads import *  # noqa: F401,F403
 from .localizers import *  # noqa: F401,F403
 from .losses import *  # noqa: F401,F403
-from .multimodal import *  # noqa: F401,F403
+try:
+    from .multimodal import *  # noqa: F401,F403
+except Exception:
+    # Allow missing optional deps (e.g., timm) without breaking base imports
+    pass
 from .necks import *  # noqa: F401,F403
 from .recognizers import *  # noqa: F401,F403
 from .roi_heads import *  # noqa: F401,F403

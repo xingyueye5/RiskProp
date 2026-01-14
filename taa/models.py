@@ -14,6 +14,7 @@ from mmengine.model import BaseModel
 from mmaction.models import BaseRecognizer, BaseHead
 
 from .models_transformer import TransformerDecoder, TransformerDecoderLayer
+import random
 
 
 @MODELS.register_module()
@@ -119,7 +120,7 @@ class AnticipationHead(BaseHead):
             idx = (idx - self.clip_len + 1).clamp(0, x.shape[0] - 1)
             x = x[idx]
         elif x.dim() == 3 and not self.with_decoder:
-            x = x[..., -1]
+            x = x.mean(dim=-1)
         elif x.dim() == 3 and self.with_decoder:
             x = x.permute(0, 2, 1)
         if self.two_stream:
@@ -160,6 +161,119 @@ class AnticipationHead(BaseHead):
         # [N, num_classes]
         return torch.cat([cls_score, cls_score_flow], dim=-1) if self.two_stream else cls_score.squeeze()
 
+
+    def monotony_loss(self, cls_scores: torch.Tensor, data_samples: SampleList) -> torch.Tensor:
+        # 添加全局排序损失（新采样策略）- 对概率进行约束
+        M, l = 30, cls_scores.shape[1]  # M为采样对数
+        margin_per_frame = 0.01  # 减小margin，适应概率空间
+        loss_mono = torch.tensor(0.0, device=cls_scores.device)
+        window_count = 0
+        
+        for i, data_sample in enumerate(data_samples):
+            if data_sample.target:
+                if l < 15:
+                    continue
+                global_i, global_j = [], []
+                # gap采样范围：10%~90%区间
+                min_gap = max(1, int(l * 0.1))
+                max_gap = max(min_gap + 1, int(l * 0.9))
+                #min_gap,max_gap=1,l-1
+                for _ in range(M):
+                    gap = random.randint(min_gap, max_gap)
+                    p_max = l - gap - 1
+                    if p_max <= 0:
+                        continue
+                    p = random.randint(0, p_max)
+                    q = p + gap
+                    if q < l:
+                        global_i.append(p)
+                        global_j.append(q)
+                batch_loss = 0
+                loss_count = 0
+                if len(global_i) > 0:
+                    global_i_tensor = torch.tensor(global_i, device=cls_scores.device)
+                    global_j_tensor = torch.tensor(global_j, device=cls_scores.device)
+                    # 对sigmoid后的概率进行单调性约束
+                    prob_i = torch.sigmoid(cls_scores[i, global_i_tensor])
+                    prob_j = torch.sigmoid(cls_scores[i, global_j_tensor])
+                    # 动态margin：根据gap大小调整
+                    dynamic_margin = margin_per_frame * (global_j_tensor - global_i_tensor) / l
+                    global_loss = torch.clamp(
+                        prob_i - prob_j + dynamic_margin,
+                        min=0
+                    ).mean()
+                    batch_loss += global_loss
+                    loss_count += 1
+                if loss_count > 0:
+                    loss_mono += batch_loss / loss_count
+                    window_count += 1
+        # 计算平均window loss
+        if window_count > 0:
+            loss_mono = loss_mono / window_count
+        else:
+            loss_mono = torch.tensor(0.0, device=cls_scores.device)
+
+        return loss_mono
+
+
+    def piecewise_mono_loss(self, cls_scores, data_samples, delta0=0.01, M=30):
+        """
+        cls_scores: [B, T] logits
+        data_samples: 样本对象列表（需包含 target）
+        delta0: 初始边际 δ0
+        M: 每个样本采样对数
+        """
+        B, T = cls_scores.shape
+        loss_total = torch.tensor(0.0, device=cls_scores.device)
+        count_total = 0
+        min_gap = max(1, int(T * 0.1))
+        max_gap = max(min_gap + 1, int(T * 0.9))
+
+        for i, data_sample in enumerate(data_samples):
+            if not data_sample.target:
+                continue
+            if T < 5:
+                continue
+
+            pair_losses = []
+            for _ in range(M):
+                # 随机采样 (i,j)
+                gap = random.randint(min_gap, max_gap)
+                p_max = T - gap - 1
+                if p_max <= 0:
+                    continue
+                p = random.randint(0, p_max)
+                q = p + gap
+
+                # 概率
+                prob_i = torch.sigmoid(cls_scores[i, p])
+                prob_j = torch.sigmoid(cls_scores[i, q])
+
+                # ū_i:j : 区间不确定性均值 (示例: 基于logit方差或温度缩放)
+                # 这里用简单近似: 1 - |p-0.5| * 2 作为单点不确定性，再取均值
+                seg_probs = torch.sigmoid(cls_scores[i, p:q+1])
+                u_seg = (1 - torch.abs(seg_probs - 0.4) * 2).mean()
+
+                delta_ij = delta0 * gap * (1 - u_seg)
+
+                # ---- 门控权重 w_i:j ----
+                # 如果区间跨越自监督变点，则弱化/关闭单调约束
+                w_ij = 1.0
+
+                # 计算 hinge loss
+                loss_ij = w_ij * torch.clamp(prob_i - prob_j + delta_ij, min=0)
+                pair_losses.append(loss_ij)
+
+            if len(pair_losses) > 0:
+                loss_total += torch.stack(pair_losses).mean()
+                count_total += 1
+
+        if count_total > 0:
+            return loss_total / count_total
+        else:
+            return torch.tensor(0.0, device=cls_scores.device)
+
+
     def loss_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> Dict:
         if self.two_stream:
             cls_scores_flow = cls_scores[..., 1]
@@ -182,8 +296,22 @@ class AnticipationHead(BaseHead):
             loss_mse = ((cls_scores[:, 1:].detach() - cls_scores[:, :-1]) ** 2).mean()
 
             # loss_mse = self.loss_cls(cls_scores[:, :-1], torch.sigmoid(cls_scores[:, 1:].detach()))
+            
+            #loss_mono = self.monotony_loss(cls_scores, data_samples)
+            loss_piecewise = self.piecewise_mono_loss(cls_scores, data_samples)
 
-            return dict(loss_cls=loss_cls, loss_mse=loss_mse)
+            # 损失权重配置
+            loss_cls_weight= 1.0
+            loss_mse_weight= 1.5
+            loss_mono_weight= 1.1
+            return dict(
+                loss_cls=loss_cls * loss_cls_weight,
+                loss_mse=loss_mse * loss_mse_weight,
+                #loss_mono=loss_mono * loss_mono_weight
+                loss_mono=loss_piecewise * loss_mono_weight
+            )
+
+            #return dict(loss_cls=loss_cls, loss_mse=loss_mse)
         else:
             labels = []
             for data_sample in data_samples:
@@ -212,8 +340,24 @@ class AnticipationHead(BaseHead):
             labels = torch.concatenate(labels).float().to(cls_scores.device)
 
             loss_cls = self.loss_cls(cls_scores, labels, pos_weight=self.pos_weight)
+            #return dict(loss_cls=loss_cls)
+            #cls_scores = cls_scores.reshape(len(data_samples), -1)
+            #loss_mse = ((cls_scores[:, 1:].detach()- cls_scores[:, :-1]) ** 2).mean()
+            #return dict(loss_cls=loss_cls, loss_mse=loss_mse)
+            # loss_mse = self.loss_cls(cls_scores[:, :-1], torch.sigmoid(cls_scores[:, 1:].detach()))
+            cls_scores = cls_scores.reshape(len(data_samples), -1)
+            #loss_mono = self.monotony_loss(cls_scores, data_samples)
 
-            return dict(loss_cls=loss_cls)
+            # 损失权重配置
+            loss_cls_weight= 1.0
+            loss_mse_weight= 1.5
+            loss_mono_weight= 1.1
+            return dict(
+                loss_cls=loss_cls * loss_cls_weight
+                # loss_mse=loss_mse * loss_mse_weight,
+                #loss_mono=loss_mono * loss_mono_weight
+            )
+
 
     def predict_by_feat(self, cls_scores: torch.Tensor, data_samples: SampleList) -> SampleList:
         if self.two_stream:
@@ -331,3 +475,9 @@ class Recognizer3DTwoStream(BaseRecognizer):
             if self.with_cls_head and stage == "head":
                 x = self.cls_head(x, **loss_predict_kwargs)
                 return x, loss_predict_kwargs
+
+
+
+
+
+

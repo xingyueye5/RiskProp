@@ -6,11 +6,18 @@ import pandas as pd
 from typing import Any, Dict, List, Sequence, Tuple
 from collections import OrderedDict
 from mmengine.evaluator import BaseMetric
+from mmengine import dump
 
 from mmaction.registry import METRICS
 
 from sklearn.metrics import average_precision_score
-from .utils import visualize_pred_score
+from .utils import (
+    visualize_pred_score,
+    visualize_pred_line,
+    plot_roc_curves_from_csvs,
+    plot_tta_curves_from_csvs,
+    plot_mean_accident_aligned_curve_from_results,
+)
 
 
 @METRICS.register_module()
@@ -88,19 +95,47 @@ class AnticipationMetric(BaseMetric):
             id=[x["video_id"] for x in results if x["is_test"]],
             target=[f'{np.max(x["pred"][-1]):.4f}' for x in results if x["is_test"]],
         )
-        df = pd.DataFrame(data)
-        if self.epoch is not None:
-            df.to_csv(f"outputs/sample_submission_{self.epoch}.csv", index=False)
-        else:
-            df.to_csv("outputs/sample_submission.csv", index=False)
+        # df = pd.DataFrame(data)
+        # if self.epoch is not None:
+        #     df.to_csv(f"{self.output_dir}/sample_submission_{self.epoch}.csv", index=False)
+        # else:
+        #     df.to_csv(f"{self.output_dir}/sample_submission.csv", index=False)
 
+        vis_results=[]
         for result in results:
-            result["threshold"] = eval_results.get(f"threshold@{self.fpr_max:.2f}", 0.5)
+            # 尝试查找验证集的threshold，如果找不到则查找训练集的threshold
+            threshold_key = f"threshold@{self.fpr_max:.2f}"
+            if threshold_key not in eval_results:
+                threshold_key = f"threshold#{self.fpr_max:.2f}"
+            result["threshold"] = eval_results.get(threshold_key, 0.5)
+            if result["target"] is True and result["is_val"] is True:
+                continue
             if result["video_id"] in self.vis_list:
-                if result["target"] is True:
-                    visualize_pred_score(result, self.output_dir, self.epoch)
+                #if result["target"] is True:
+                    #visualize_pred_score(result, self.output_dir, self.epoch)
+                #visualize_pred_line(result, self.output_dir, self.epoch)
+                vis_results.append(result)
+        if self.epoch<=20:
+            vis_out_file = os.path.join(self.output_dir, "prev",f"results_epoch{self.epoch}.pkl")
+            dump(vis_results, vis_out_file)
+
+        
+        # 生成基于验证集的事故对齐平均风险曲线
+        # try:
+        #     plot_mean_accident_aligned_curve_from_results(
+        #         results=results,
+        #         output_dir="visualizations",
+        #         epoch=self.epoch,
+        #         max_pre_frames=50,
+        #         include_accident_frame=True,
+        #         only_non_test=True,
+        #         auto_max_pre_frames=True,
+        #     )
+        # except Exception as e:
+        #     print(f"Dataset-level plotting failed: {e}")
 
         return eval_results
+
 
     def calculate(self, preds, labels, abnormal_start_inds, accident_inds, sep) -> Dict:
         """Compute the metrics from processed results.
@@ -127,7 +162,7 @@ class AnticipationMetric(BaseMetric):
             for pred, label, i in zip(preds, labels, accident_inds)
             if label
         ]
-        eval_results[f"tta_old{sep}0.5"] = sum(ttas) / len(ttas)
+        # eval_results[f"tta_old{sep}0.5"] = sum(ttas) / len(ttas)
 
         ttas = [
             (i - np.argmax(pred[: i + 1, None] >= preds_n, axis=0)) / 10 * np.any(pred[: i + 1, None] >= preds_n, axis=0)
@@ -135,10 +170,13 @@ class AnticipationMetric(BaseMetric):
             if label
         ]
         ttas = np.array(ttas).mean(axis=0)
-        eval_results[f"mtta_old{sep}0.1"] = ttas[: int(len(ttas) * self.fpr_max)].mean()
+        # eval_results[f"tta_old{sep}0.01"] = ttas[int(len(ttas) * 0.01)]
+        # eval_results[f"tta_old{sep}0.05"] = ttas[int(len(ttas) * 0.05)]
+        # eval_results[f"tta_old{sep}0.1"] = ttas[int(len(ttas) * self.fpr_max)]
+        # eval_results[f"mtta_old{sep}0.1"] = ttas[: int(len(ttas) * self.fpr_max)].mean()
 
         df = pd.DataFrame(dict(fpr=[(i + 1) / len(ttas) for i in range(len(ttas))], tta=ttas))
-        df.to_csv(f"outputs/fpr_tta_old_{self.epoch}.csv", index=False)
+        df.to_csv(f"{self.output_dir}/fpr_tta_old_{self.epoch}.csv", index=False)
 
         ttas = [
             (20 - np.argmax(pred[i - 20 : i + 1] >= 0.5)) / 10 if np.any(pred[i - 20 : i + 1] >= 0.5) else 0
@@ -153,10 +191,13 @@ class AnticipationMetric(BaseMetric):
             if label
         ]
         ttas = np.array(ttas).mean(axis=0)
+        eval_results[f"tta_2s{sep}0.01"] = ttas[int(len(ttas) * 0.01)]
+        eval_results[f"tta_2s{sep}0.05"] = ttas[int(len(ttas) * 0.05)]
+        eval_results[f"tta_2s{sep}0.1"] = ttas[int(len(ttas) * self.fpr_max)]
         eval_results[f"mtta_2s{sep}0.1"] = ttas[: int(len(ttas) * self.fpr_max)].mean()
 
         df = pd.DataFrame(dict(fpr=[(i + 1) / len(ttas) for i in range(len(ttas))], tta=ttas))
-        df.to_csv(f"outputs/fpr_tta_2s_{self.epoch}.csv", index=False)
+        df.to_csv(f"{self.output_dir}/fpr_tta_2s_{self.epoch}.csv", index=False)
 
         ttas = [
             (j - i - np.argmax(pred[i : j + 1] >= 0.5)) / 10 if np.any(pred[i : j + 1] >= 0.5) else 0
@@ -171,10 +212,14 @@ class AnticipationMetric(BaseMetric):
             if label
         ]
         ttas = np.array(ttas).mean(axis=0)
+        eval_results[f"tta{sep}0.01"] = ttas[int(len(ttas) * 0.01)]
+        eval_results[f"tta{sep}0.05"] = ttas[int(len(ttas) * 0.05)]
+        eval_results[f"tta{sep}0.1"] = ttas[int(len(ttas) * self.fpr_max)]
         eval_results[f"mtta{sep}0.1"] = ttas[: int(len(ttas) * self.fpr_max)].mean()
+        eval_results[f"tta{sep}1"] = ttas[int(len(ttas) * 0.99)]
 
         df = pd.DataFrame(dict(fpr=[(i + 1) / len(ttas) for i in range(len(ttas))], tta=ttas))
-        df.to_csv(f"outputs/fpr_tta_{self.epoch}.csv", index=False)
+        df.to_csv(f"{self.output_dir}/fpr_tta_{self.epoch}.csv", index=False)
 
         preds_0 = [np.max(pred[-5:]) for pred, label in zip(preds, labels) if label]
         preds_5 = [np.max(pred[-10:-5]) for pred, label in zip(preds, labels) if label]
@@ -206,14 +251,14 @@ class AnticipationMetric(BaseMetric):
             eval_results[f"AP_full{sep}0.5s"] + eval_results[f"AP_full{sep}1.0s"] + eval_results[f"AP_full{sep}1.5s"]
         ) / 3
 
-        df = pd.DataFrame(dict(fpr=fpr_0, tpr=tpr_0))
-        df.to_csv(f"outputs/fpr_tpr_0_{self.epoch}.csv", index=False)
-        df = pd.DataFrame(dict(fpr=fpr_5, tpr=tpr_5))
-        df.to_csv(f"outputs/fpr_tpr_5_{self.epoch}.csv", index=False)
-        df = pd.DataFrame(dict(fpr=fpr_10, tpr=tpr_10))
-        df.to_csv(f"outputs/fpr_tpr_10_{self.epoch}.csv", index=False)
-        df = pd.DataFrame(dict(fpr=fpr_15, tpr=tpr_15))
-        df.to_csv(f"outputs/fpr_tpr_15_{self.epoch}.csv", index=False)
+        # df = pd.DataFrame(dict(fpr=fpr_0, tpr=tpr_0))
+        # df.to_csv(f"{self.output_dir}/fpr_tpr_0_{self.epoch}.csv", index=False)
+        # df = pd.DataFrame(dict(fpr=fpr_5, tpr=tpr_5))
+        # df.to_csv(f"{self.output_dir}/fpr_tpr_5_{self.epoch}.csv", index=False)
+        # df = pd.DataFrame(dict(fpr=fpr_10, tpr=tpr_10))
+        # df.to_csv(f"{self.output_dir}/fpr_tpr_10_{self.epoch}.csv", index=False)
+        # df = pd.DataFrame(dict(fpr=fpr_15, tpr=tpr_15))
+        # df.to_csv(f"{self.output_dir}/fpr_tpr_15_{self.epoch}.csv", index=False)
 
         eval_results[f"num_samples{sep}"] = len(preds)
         return eval_results
