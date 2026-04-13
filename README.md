@@ -1,12 +1,16 @@
-# RiskProp: Collision-Anchored Self-Supervised Risk Propagation for Early Accident Anticipation（CVPR 2026 Highlight）
+# RiskProp: Collision-Anchored Self-Supervised Risk Propagation for Early Accident Anticipation
+
+<p align="center">
+  <b>CVPR 2026 Highlight</b>
+</p>
 
 ## Overview
-RiskProp is a traffic accident anticipation framework for dashcam videos. It predicts collision risk before the accident happens and introduces collision-anchored self-supervised temporal constraints to enforce progressively increasing risk near the collision point, without requiring dense frame-level supervision. Instead of relying on dense frame-level risk annotations, it regularizes the temporal evolution of predicted risk so that risk scores become progressively more collision-consistent as the accident approaches.
+RiskProp is a traffic accident anticipation framework for dashcam videos. It predicts collision risk in advance and introduces collision-anchored self-supervised temporal constraints to enforce progressively increasing risk toward the collision point. Instead of relying on dense frame-level risk annotations, RiskProp regularizes the temporal evolution of risk scores using collision supervision, leading to smoother and more collision-consistent anticipation.
 
 Built on [MMAction2](https://github.com/open-mmlab/mmaction2), this repository includes training and evaluation code for early accident anticipation on CAP, DADA, D²-City, and Nexar-style datasets.
 
 <p align="center">
-  <img src="resources/visual.gif" width="85%" alt="Demo">
+  <img src="resources/visual.gif" width="85%" alt="RiskProp demo">
 </p>
 
 ## Installation
@@ -52,7 +56,7 @@ Dataset roots are defined at the top of each config in `configs/`. The provided 
 
 ## Quick Start
 
-### Recommended wrapper scripts
+### Option 1: Use the wrapper scripts
 
 The repository provides two lightweight wrappers:
 
@@ -66,8 +70,8 @@ bash dist_train.sh
 bash dist_test.sh
 ```
 
-### Direct training commands
-
+### Option 2: Launch training directly
+#### Training
 ```bash
 # Main snippet-level anticipation model
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
@@ -76,11 +80,9 @@ tools/dist_train.sh configs/predict_anomaly_snippet.py 8
 # Frame-level anticipation model
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
 tools/dist_train.sh configs/predict_anomaly_frame.py 8
-
 ```
 
-### Direct evaluation command
-
+### Evalution
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29501 \
 tools/dist_test.sh configs/predict_anomaly_snippet.py \
@@ -100,10 +102,10 @@ Checkpoints and logs are saved to `work_dirs/<config_name>/`. The default best-c
 
 | Config | Task | Backbone | Temporal Setup | Label Source |
 | --- | --- | --- | --- | --- |
-| `predict_anomaly_snippet.py` | Accident anticipation | SlowOnly-R50 | `5` frames x `30` clips | `constraint` |
-| `predict_anomaly_frame.py` | Accident anticipation | ResNet-50 + RNN | `1` frame x `30` clips | `annotation` |
-| `predict_occurrence_snippet.py` | Occurrence prediction | SlowOnly-R50 + decoder | `5` frames x `30` clips | `annotation` |
-| `predict_occurrence_frame.py` | Occurrence prediction | ResNet-50 + RNN + decoder | `1` frame x `30` clips | `annotation` |
+| `predict_anomaly_snippet.py` | Accident anticipation | SlowOnly-R50 | `5` frames x `30` clips |
+| `predict_anomaly_frame.py` | Accident anticipation | ResNet-50 + RNN | `1` frame x `30` clips | 
+| `predict_occurrence_snippet.py` | Occurrence prediction | SlowOnly-R50 + decoder | `5` frames x `30` clips | 
+| `predict_occurrence_frame.py` | Occurrence prediction | ResNet-50 + RNN + decoder | `1` frame x `30` clips | 
 
 ## Evaluation Metrics
 
@@ -117,10 +119,10 @@ Checkpoints and logs are saved to `work_dirs/<config_name>/`. The default best-c
 ## Citation
 
 ```bibtex
-@article{zou2026riskprop,
+@inproceedings{zou2026riskprop,
   title={RiskProp: Collision-Anchored Self-Supervised Risk Propagation for Early Accident Anticipation},
   author={Zou, Yiyang and Zhao, Tianhao and Xiao, Peilun and Jin, Hongyu and Qi, Longyu and Li, Yuxuan and Liang, Liyin and Qian, Yifeng and Lai, Chunbo and Lin, Yutian and others},
-  journal={arXiv preprint arXiv:2603.27165},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
   year={2026}
 }
 ```
