@@ -1,20 +1,19 @@
 # RiskProp: Collision-Anchored Self-supervised Temporal Constraints for Early Accident Anticipation
 
-> **CVPR 2026**
+> **CVPR 2026 Highlight**
 >
-> [[Paper](#)] · [[Project Page](#)] · [[Video](#)]
+> [[Paper](https://arxiv.org/pdf/2603.27165)] · [[Demo Video](resources/visual.mp4)]
 
----
+RiskProp is a traffic accident anticipation framework for dashcam videos. It predicts collision risk before the accident happens and introduces collision-anchored self-supervised temporal constraints to enforce progressively increasing risk near the collision point, without requiring dense frame-level supervision.
 
-## Overview
+Built on [MMAction2](https://github.com/open-mmlab/mmaction2), this repository includes training and evaluation code for early accident anticipation on CAP, DADA, D²-City, and Nexar-style datasets.
 
-**RiskProp** is a dashcam-based traffic accident anticipation framework that predicts frame-level collision risk before an accident occurs. It introduces collision-anchored self-supervised temporal constraints to enforce monotonically increasing risk scores as the accident approaches, without requiring dense per-frame annotations.
+## Highlights
 
-Built on [MMAction2](https://github.com/open-mmlab/mmaction2), RiskProp supports multi-dataset training across CAP, DADA, D²-City, and Nexar, and provides both frame-level and snippet-level prediction modes.
-
-![Data Pipeline](resources/data_pipeline.png)
-
----
+- Collision-anchored self-supervised risk propagation for early accident anticipation.
+- Support for both snippet-level and frame-level prediction.
+- Unified training pipeline built on MMAction2.
+- Evaluation centered on `mAUC@` under low-FPR settings.
 
 ## Installation
 
@@ -31,13 +30,11 @@ mim install mmaction2==1.2.0
 pip install -v -e .
 ```
 
----
-
 ## Data Preparation
 
-Organize datasets under `data/` as follows:
+Place datasets under `data/` with a layout similar to:
 
-```
+```text
 data/
 ├── MM-AU/
 │   ├── CAP-DATA/
@@ -60,122 +57,89 @@ data/
     └── test_raw_frames/
 ```
 
-Dataset paths are configured at the top of each config file under `configs/`.
+Dataset roots are defined at the top of each config in `configs/`. The provided configs already contain entries for CAP, DADA, D²-City, and Nexar; enable or disable datasets there as needed.
 
----
+## Quick Start
 
-## Training
+### Recommended wrapper scripts
 
-Edit `dist_train.sh` to set the config `name` and `CUDA_VISIBLE_DEVICES`, then run:
+The repository provides two lightweight wrappers:
+
+- `dist_train.sh`: copies the selected config and `taa/` source into `codes/<name>/<timestamp>/`, then launches distributed training.
+- `dist_test.sh`: runs distributed evaluation for the selected config and checkpoint.
+
+Before using them, edit the `name`, GPU list, and checkpoint path inside the scripts if needed.
 
 ```bash
 bash dist_train.sh
-```
-
-This saves a timestamped code snapshot to `codes/` and launches distributed training. To run directly:
-
-```bash
-# Snippet-level anticipation (SlowOnly-R50, constraint label) — main model
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
-    tools/dist_train.sh configs/predict_anomaly_snippet.py 8
-
-# Frame-level anticipation (ResNet-50 + LSTM, annotation label)
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
-    tools/dist_train.sh configs/predict_anomaly_frame.py 8
-
-# Occurrence prediction (SlowOnly-R50 + Transformer decoder)
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
-    tools/dist_train.sh configs/predict_occurrence_snippet.py 8
-```
-
-Checkpoints and logs are saved to `work_dirs/<config_name>/`. The best checkpoint is selected by `mAUC@` (partial AUC under FPR ≤ 0.1).
-
-**Useful training flags:**
-
-| Flag | Description |
-|------|-------------|
-| `--resume` | Auto-resume from the latest checkpoint |
-| `--amp` | Enable automatic mixed precision |
-| `--auto-scale-lr` | Scale LR proportionally to actual batch size |
-| `--cfg-options key=val` | Override any config field inline |
-
-For Slurm clusters:
-
-```bash
-tools/slurm_train.sh <partition> <job_name> configs/predict_anomaly_snippet.py --gpus 8
-```
-
----
-
-## Evaluation
-
-Edit `dist_test.sh` to set the config `name` and checkpoint path, then run:
-
-```bash
 bash dist_test.sh
 ```
 
-Or run directly:
+### Direct training commands
+
+```bash
+# Main snippet-level anticipation model
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
+tools/dist_train.sh configs/predict_anomaly_snippet.py 8
+
+# Frame-level anticipation model
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
+tools/dist_train.sh configs/predict_anomaly_frame.py 8
+
+# Snippet-level occurrence prediction
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
+tools/dist_train.sh configs/predict_occurrence_snippet.py 8
+
+# Frame-level occurrence prediction
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
+tools/dist_train.sh configs/predict_occurrence_frame.py 8
+```
+
+### Direct evaluation command
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29501 \
-    tools/dist_test.sh configs/predict_anomaly_snippet.py \
-    work_dirs/predict_anomaly_snippet/<checkpoint>.pth 8
+tools/dist_test.sh configs/predict_anomaly_snippet.py \
+work_dirs/predict_anomaly_snippet/<checkpoint>.pth 8
 ```
 
-To dump predictions for offline analysis:
+To export predictions for offline analysis:
 
 ```bash
-tools/dist_test.sh configs/predict_anomaly_snippet.py <checkpoint> 8 \
-    --dump outputs/predictions.pkl
+tools/dist_test.sh configs/predict_anomaly_snippet.py <checkpoint>.pth 8 \
+  --dump outputs/predictions.pkl
 ```
 
-Results are saved to `work_dirs/`. Check `metrics_AUC.png` to identify the best epoch, then inspect the corresponding log for detailed metrics.
+Checkpoints and logs are saved to `work_dirs/<config_name>/`. The default best-checkpoint criterion is `mAUC@`.
 
----
+## Config Overview
 
-## Configs
+| Config | Task | Backbone | Temporal Setup | Label Source |
+| --- | --- | --- | --- | --- |
+| `predict_anomaly_snippet.py` | Accident anticipation | SlowOnly-R50 | `5` frames x `30` clips | `constraint` |
+| `predict_anomaly_frame.py` | Accident anticipation | ResNet-50 + RNN | `1` frame x `30` clips | `annotation` |
+| `predict_occurrence_snippet.py` | Occurrence prediction | SlowOnly-R50 + decoder | `5` frames x `30` clips | `annotation` |
+| `predict_occurrence_frame.py` | Occurrence prediction | ResNet-50 + RNN + decoder | `1` frame x `30` clips | `annotation` |
 
-| Config | Backbone | Clip | Label | Notes |
-|--------|----------|------|-------|-------|
-| `predict_anomaly_snippet.py` | SlowOnly-R50 | 5-frame × 30 clips | constraint | Main model |
-| `predict_anomaly_frame.py` | ResNet-50 + LSTM | 1-frame × 30 clips | annotation | Frame-level |
-| `predict_occurrence_snippet.py` | SlowOnly-R50 | 5-frame × 30 clips | annotation | With Transformer decoder |
-
----
-
-## Metrics
+## Evaluation Metrics
 
 | Metric | Description |
-|--------|-------------|
-| `mAUC@` | Mean partial AUC (FPR ≤ 0.1) at 0.5s, 1.0s, 1.5s before accident **(primary)** |
-| `mAUC` | Mean full-curve AUC at 0.5s, 1.0s, 1.5s |
-| `mAP` | Mean Average Precision at 0.5s, 1.0s, 1.5s |
-| `mTTA@0.1` | Mean Time-To-Accident at FPR ≤ 0.1 |
-
----
-
-## Model Zoo
-
-| Config | Dataset | mAUC@ | mAUC | mAP | Download |
-|--------|---------|-------|------|-----|----------|
-| `predict_anomaly_snippet` | CAP | - | - | - | [model](#) \| [log](#) |
-| `predict_anomaly_frame` | CAP | - | - | - | [model](#) \| [log](#) |
-
----
+| --- | --- |
+| `mAUC@` | Mean partial AUC with `FPR <= 0.1` at `0.5s`, `1.0s`, and `1.5s` before the accident |
+| `mAUC` | Mean full-curve AUC at `0.5s`, `1.0s`, and `1.5s` |
+| `mAP` | Mean Average Precision at `0.5s`, `1.0s`, and `1.5s` |
+| `mTTA@0.1` | Mean Time-To-Accident at `FPR <= 0.1` |
 
 ## Citation
 
 ```bibtex
-@inproceedings{riskprop2026,
-  title     = {RiskProp: Collision-Anchored Self-supervised Temporal Constraints for Early Accident Anticipation},
-  author    = {zyy, zth},
-  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year      = {2026}
+@article{zou2026riskprop,
+  title={RiskProp: Collision-Anchored Self-Supervised Risk Propagation for Early Accident Anticipation},
+  author={Zou, Yiyang and Zhao, Tianhao and Xiao, Peilun and Jin, Hongyu and Qi, Longyu and Li, Yuxuan and Liang, Liyin and Qian, Yifeng and Lai, Chunbo and Lin, Yutian and others},
+  journal={arXiv preprint arXiv:2603.27165},
+  year={2026}
 }
 ```
-
----
 
 ## Acknowledgements
 
