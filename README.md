@@ -1,19 +1,27 @@
-# RiskProp: Collision-Anchored Self-supervised Temporal Constraints for Early Accident Anticipation
+# RiskProp: Collision-Anchored Self-supervised Temporal Constraints for Early Accident Anticipation（CVPR 2026 Highlight）
 
-> **CVPR 2026 Highlight**
->
 > [[Paper](https://arxiv.org/pdf/2603.27165)] · [[Demo Video](resources/visual.mp4)]
 
 RiskProp is a traffic accident anticipation framework for dashcam videos. It predicts collision risk before the accident happens and introduces collision-anchored self-supervised temporal constraints to enforce progressively increasing risk near the collision point, without requiring dense frame-level supervision.
 
 Built on [MMAction2](https://github.com/open-mmlab/mmaction2), this repository includes training and evaluation code for early accident anticipation on CAP, DADA, D²-City, and Nexar-style datasets.
 
+## Overview
+
+<div align="center">
+  <video src="resources/visual.mp4" controls muted playsinline width="85%">
+    Your Markdown viewer does not support embedded videos.
+  </video>
+</div>
+
+RiskProp learns accident anticipation with collision-anchored self-supervised temporal constraints. Instead of relying on dense frame-level risk annotations, it regularizes the temporal evolution of predicted risk so that risk scores become progressively more collision-consistent as the accident approaches.
+
 ## Highlights
 
-- Collision-anchored self-supervised risk propagation for early accident anticipation.
-- Support for both snippet-level and frame-level prediction.
-- Unified training pipeline built on MMAction2.
-- Evaluation centered on `mAUC@` under low-FPR settings.
+- Collision-anchored self-supervised learning for early accident anticipation.
+- Support for both snippet-level and frame-level training settings.
+- Unified implementation on top of MMAction2 for CAP, DADA, D²-City, and Nexar-style datasets.
+- Evaluation focused on low-FPR anticipation quality with `mAUC@`, `mAUC`, `mAP`, and `mTTA@0.1`.
 
 ## Installation
 
@@ -46,9 +54,6 @@ data/
 │   └── DADA-DATA/
 │       ├── dada_text_annotations.xlsx
 │       └── ...
-├── D_square-City/
-│   ├── annotations.csv
-│   └── raw/
 └── nexar-collision-prediction/
     ├── annotations.csv
     ├── train/
@@ -86,13 +91,6 @@ tools/dist_train.sh configs/predict_anomaly_snippet.py 8
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
 tools/dist_train.sh configs/predict_anomaly_frame.py 8
 
-# Snippet-level occurrence prediction
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
-tools/dist_train.sh configs/predict_occurrence_snippet.py 8
-
-# Frame-level occurrence prediction
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
-tools/dist_train.sh configs/predict_occurrence_frame.py 8
 ```
 
 ### Direct evaluation command
