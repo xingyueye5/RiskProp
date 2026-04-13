@@ -197,7 +197,7 @@ test_evaluator = val_evaluator
 
 train_cfg = dict(type="EpochBasedTrainLoop", max_epochs=50, val_begin=1, val_interval=1)
 
-# 每轮都保存权重，并且只保留最新的权重
+# Save the weights after every epoch, and keep only the latest checkpoint.
 default_hooks = dict(checkpoint=dict(type="CheckpointHook", interval=1, max_keep_ckpts=50, save_best="mAUC@", rule="greater"))
 custom_hooks = [dict(type="EpochHook"), dict(type="AnticipationMetricHook")]
 

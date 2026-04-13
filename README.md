@@ -1,8 +1,6 @@
 # RiskProp: Collision-Anchored Self-Supervised Risk Propagation for Early Accident Anticipation
 
-<p align="center">
-  <b>CVPR 2026 Highlight</b>
-</p>
+<h3 align="center">CVPR 2026 Highlight</h3>
 
 ## Overview
 RiskProp is a traffic accident anticipation framework for dashcam videos. It predicts collision risk in advance and introduces collision-anchored self-supervised temporal constraints to enforce progressively increasing risk toward the collision point. Instead of relying on dense frame-level risk annotations, RiskProp regularizes the temporal evolution of risk scores using collision supervision, leading to smoother and more collision-consistent anticipation.
@@ -71,7 +69,7 @@ bash dist_test.sh
 ```
 
 ### Option 2: Launch training directly
-#### Training
+### Training
 ```bash
 # Main snippet-level anticipation model
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 PORT=29500 \
@@ -100,8 +98,8 @@ Checkpoints and logs are saved to `work_dirs/<config_name>/`. The default best-c
 
 ## Config Overview
 
-| Config | Task | Backbone | Temporal Setup | Label Source |
-| --- | --- | --- | --- | --- |
+| Config | Task | Backbone | Temporal Setup |
+| --- | --- | --- | --- |
 | `predict_anomaly_snippet.py` | Accident anticipation | SlowOnly-R50 | `5` frames x `30` clips |
 | `predict_anomaly_frame.py` | Accident anticipation | ResNet-50 + RNN | `1` frame x `30` clips | 
 | `predict_occurrence_snippet.py` | Occurrence prediction | SlowOnly-R50 + decoder | `5` frames x `30` clips | 

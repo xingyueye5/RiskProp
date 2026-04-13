@@ -164,10 +164,10 @@ class AnticipationHead(BaseHead):
 
     def adaptive_mono_loss(self, cls_scores, data_samples, delta0=0.01, M=30):
         """
-        cls_scores: [B, T] logits
-        data_samples: 样本对象列表（需包含 target）
-        delta0: 初始边际 δ0
-        M: 每个样本采样对数
+        cls_scores:  [B, T] logits
+        data_samples: List of sample objects
+        delta0:  initial margin parameter δ0
+        M:  Number of pairs that each sample are sampled
         """
         B, T = cls_scores.shape
         device = cls_scores.device
@@ -251,7 +251,7 @@ class AnticipationHead(BaseHead):
             #loss_mono = self.monotony_loss(cls_scores, data_samples)
             loss_adaptive = self.adaptive_mono_loss(cls_scores, data_samples)
 
-            # 损失权重配置
+            # loss weight config
             loss_cls_weight= 1.0
             loss_ffr_weight= 1.5
             loss_mono_weight= 1.1
@@ -294,7 +294,7 @@ class AnticipationHead(BaseHead):
             loss_ffr = ((cls_scores[:, 1:].detach()- cls_scores[:, :-1]) ** 2).mean()
             loss_adaptive = self.adaptive_mono_loss(cls_scores, data_samples)
 
-            # 损失权重配置
+            # loss weight config
             loss_cls_weight= 1.0
             loss_ffr_weight= 1.5
             loss_mono_weight= 1.1

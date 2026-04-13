@@ -98,7 +98,7 @@ class AnticipationMetric(BaseMetric):
 
         vis_results=[]
         for result in results:
-            # 尝试查找验证集的threshold，如果找不到则查找训练集的threshold
+            # Try to find the threshold on the validation set; if it is unavailable, then use the threshold from the training set.
             threshold_key = f"threshold@{self.fpr_max:.2f}"
             if threshold_key not in eval_results:
                 threshold_key = f"threshold#{self.fpr_max:.2f}"
@@ -109,7 +109,7 @@ class AnticipationMetric(BaseMetric):
                 vis_results.append(result)
 
         
-        # 生成基于验证集的事故对齐平均风险曲线
+        # Generate the accident-aligned average risk curve based on the validation set.
         # try:
         #     plot_mean_accident_aligned_curve_from_results(
         #         results=results,
